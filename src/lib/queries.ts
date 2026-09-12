@@ -4,7 +4,7 @@ import {
   anomalies, auditLog, batches, components, equipmentEvents, failureSignatures,
   feedback, modelRegistry, predictions, reports, riskAssessments, telemetry,
 } from "@/db/schema";
-import { and, asc, desc, eq, ilike, inArray, or, sql, count, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql, count, type SQL } from "drizzle-orm";
 
 export async function getBatches() {
   return db.select().from(batches).orderBy(desc(batches.createdAt));
@@ -88,10 +88,8 @@ export async function getAnomalyQueue(batchId: number) {
   return rows.map((r) => ({ ...r, sig: sigMap.get(r.c.id) ?? null, pred: predMap.get(r.c.id) ?? null }));
 }
 
-export async function getEquipmentEvents(batchId?: number) {
-  return db.select().from(equipmentEvents)
-    .where(batchId != null ? eq(equipmentEvents.batchId, batchId) : undefined)
-    .orderBy(desc(equipmentEvents.createdAt)).limit(20);
+export async function getEquipmentEvents() {
+  return db.select().from(equipmentEvents).orderBy(desc(equipmentEvents.createdAt)).limit(20);
 }
 
 export async function getGenealogy(batchId: number) {
@@ -131,11 +129,7 @@ export async function getReports() {
 export async function getReport(id: number) {
   const [row] = await db.select().from(reports).where(eq(reports.id, id));
   if (!row) return null;
-  let pass = null;
-  if (row.componentId) {
-    const [component] = await db.select().from(components).where(eq(components.id, row.componentId));
-    if (component) pass = await getPassport(component.componentCode);
-  }
+  const pass = row.componentId ? await getPassport((await db.select().from(components).where(eq(components.id, row.componentId)))[0].componentCode) : null;
   return { report: row, pass };
 }
 
@@ -151,10 +145,9 @@ export async function searchComponentCodes(q: string) {
 }
 
 export async function batchKbMarginals(batchId: number) {
-  // Raw-signal population corridor over the accepted/qualified cohort. Physics-
-  // normalized residuals remain in the model pipeline; the explorer intentionally
-  // preserves raw telemetry visibility.
-  const selectCorridor = (cohortOnly: boolean) => db.select({
+  // per-hour population stats for telemetry corridor (median, p05, p95), computed over normalized units is
+  // approximated by raw stats here for rendering corridors
+  return db.select({
     hour: telemetry.hour,
     med: sql<number>`percentile_cont(0.5) within group (order by ${telemetry.leakageUa})`,
     p16: sql<number>`percentile_cont(0.16) within group (order by ${telemetry.leakageUa})`,
@@ -163,12 +156,6 @@ export async function batchKbMarginals(batchId: number) {
     p998: sql<number>`percentile_cont(0.9985) within group (order by ${telemetry.leakageUa})`,
     medTemp: sql<number>`percentile_cont(0.5) within group (order by ${telemetry.chamberTempC})`,
   }).from(telemetry).innerJoin(components, eq(telemetry.componentId, components.id))
-    .where(and(
-      eq(components.batchId, batchId),
-      sql`${telemetry.leakageUa} IS NOT NULL`,
-      cohortOnly ? inArray(components.status, ["healthy", "qualified"]) : undefined,
-    ))
+    .where(and(eq(components.batchId, batchId), eq(components.scenarioTag, "normal")))
     .groupBy(telemetry.hour).orderBy(asc(telemetry.hour));
-  const cohort = await selectCorridor(true);
-  return cohort.length ? cohort : selectCorridor(false);
 }

@@ -8,7 +8,7 @@ import {
   modelRegistry, predictions, riskAssessments, telemetry, auditLog,
 } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
-
+import { HOURS, STATIC_LEAK_LIMIT } from "@/lib/sim/generator";
 import { isolationForest } from "@/lib/ml/isoforest";
 import {
   seriesFeatures, driftForecast, populationZ, median, mad, linFit,
@@ -53,10 +53,7 @@ function signatureFor(f: SeriesFeat, isoScore: number, inEquip: boolean, telMean
 
 export async function runPipeline(batchId: number) {
   const t0 = Date.now();
-  const [batch] = await db.select().from(batches).where(eq(batches.id, batchId));
-  if (!batch) throw new Error(`Batch ${batchId} not found`);
   const comps = await db.select().from(components).where(eq(components.batchId, batchId));
-  if (!comps.length) throw new Error("Batch contains no components");
   const telRows = await db.select().from(telemetry)
     .innerJoin(components, eq(telemetry.componentId, components.id))
     .where(eq(components.batchId, batchId));
@@ -67,29 +64,19 @@ export async function runPipeline(batchId: number) {
     byComp.get(t.componentId)!.push({ hour: t.hour, leak: t.leakageUa, vth: t.vthMv, rds: t.rdsMohm ?? 118, temp: t.chamberTempC ?? 125, vds: t.vdsStressV ?? 28 });
   }
   byComp.forEach((arr) => arr.sort((a, b) => a.hour - b.hour));
-  const observedHours = [...new Set(telRows.map((r) => r.telemetry.hour))].sort((a, b) => a - b);
-  if (!observedHours.length) throw new Error("Batch contains no telemetry");
-  const observedEnd = observedHours[observedHours.length - 1];
-  const observedStart = observedHours[0];
-  const forecastHorizonH = 168;
 
   // ---- features ----
   const feats: SeriesFeat[] = comps.map((c) => {
     const pts = byComp.get(c.id) ?? [];
-    return seriesFeatures(c.id, pts, c.staticLeakLimitUa);
+    const f = seriesFeatures(c.id, pts, 168);
+    return f;
   });
-  populationZ(feats, observedHours);
-
-  // Minimum evidence scales with the uploaded file. Four valid points is the
-  // absolute floor; ten remains the preferred full-confidence profile.
-  const nonZeroCounts = feats.map((f) => f.n).filter((n) => n > 0);
-  const typicalSamples = Math.max(0, Math.round(median(nonZeroCounts)));
-  const minSamples = Math.max(4, Math.min(10, Math.floor(typicalSamples * 0.5)));
+  populationZ(feats, HOURS);
 
   // ---- feature matrices (champion: physics-normalized, challenger: raw) ----
-  const hasTel = feats.filter((f) => f.n >= minSamples);
+  const hasTel = feats.filter((f) => f.n >= 10);
+  const F_KEYS = ["zLast", "maxAbsZ", "slopePer24h", "accel", "rollStd", "vthDrift", "maxStepZ"] as const;
   const zmat = (values: number[][]) => {
-    if (!values.length) return [];
     const cols = values[0].map((_, j) => values.map((r) => r[j]));
     const meds = cols.map((c) => median(c)), mads = cols.map((c, j) => mad(c, meds[j]));
     return values.map((r) => r.map((v, j) => (v - meds[j]) / mads[j]));
@@ -108,13 +95,8 @@ export async function runPipeline(batchId: number) {
     return [last, 0, fit.b * 24, a2 * 24, rstd, f.vthDrift, f.maxStepZ];
   });
   const XB = zmat(rawVals);
-  const forestSample = Math.max(2, Math.min(256, hasTel.length));
-  const isoA = hasTel.length >= 4
-    ? isolationForest(XA, 120, forestSample, 26170 + batchId)
-    : { scores: hasTel.map(() => 0.5), ms: 0 };
-  const isoB = hasTel.length >= 4
-    ? isolationForest(XB, 120, forestSample, 26170 + batchId)
-    : { scores: hasTel.map(() => 0.5), ms: 0 };
+  const isoA = isolationForest(XA, 120, 256, 26170);
+  const isoB = isolationForest(XB, 120, 256, 26170);
 
   // calibration → [0,1]-ish scores
   const vths = hasTel.map((f) => f.vthDrift);
@@ -147,21 +129,19 @@ export async function runPipeline(batchId: number) {
   flagged.forEach((f) => { const ch = compById.get(f.idx)!.channelId; flagByChan.set(ch, [...(flagByChan.get(ch) ?? []), f]); });
   const equipSet = new Set<number>();
   const events: any[] = [];
-  const cohortMin = Math.max(3, Math.min(8, Math.ceil(Math.max(1, flagged.length) * 0.2)));
   for (const [ch, fs] of flagByChan) {
-    if (fs.length < cohortMin || fs.length < flagged.length * 0.22) continue;
+    if (fs.length < 8 || fs.length < flagged.length * 0.22) continue;
     const hours = fs.map(spikeHour);
     const mh = median(hours);
     // robust synchronization: keep members whose onset sits within ±8h of the cohort median
-    const onsetTolerance = Math.max(0.25, (observedEnd - observedStart) * 0.05);
-    const members = fs.filter((f, i) => Math.abs(hours[i] - mh) <= onsetTolerance);
-    if (members.length < cohortMin) continue;
+    const members = fs.filter((f, i) => Math.abs(hours[i] - mh) <= 8);
+    if (members.length < 8) continue;
     const mh2 = median(members.map(spikeHour));
     const spread = Math.sqrt(members.reduce((a, f) => a + (spikeHour(f) - mh2) ** 2, 0) / members.length);
-    if (spread <= onsetTolerance) {
+    if (spread <= 8) {
       members.forEach((f) => equipSet.add(f.idx));
       events.push({
-        batchId, channelId: ch, chamberZone: null, lotId: null, eventType: "INSTRUMENTATION_EVENT",
+        channelId: ch, chamberZone: null, lotId: null, eventType: "INSTRUMENTATION_EVENT",
         startHour: Math.min(...members.map(spikeHour)), endHour: Math.max(...members.map(spikeHour)) + 4,
         affectedCount: members.length, affectedIds: members.map((f) => compById.get(f.idx)!.componentCode),
         correlation: { sameChannel: members.length, totalFlagged: flagged.length, onsetSpreadH: +spread.toFixed(1), sameLot: 0, sameZone: 0 },
@@ -179,12 +159,11 @@ export async function runPipeline(batchId: number) {
     const waferCount = new Map<string, number>();
     fs.forEach((f) => { const w = compById.get(f.idx)!.waferId; waferCount.set(w, (waferCount.get(w) ?? 0) + 1); });
     const waferMax = Math.max(0, ...waferCount.values());
-    const lotMin = Math.max(3, Math.min(4, Math.ceil(lotTotal * 0.04)));
-    if (fs.length >= lotMin && ((fs.length / lotTotal >= 0.08 && waferMax >= Math.min(2, lotMin)) || (waferMax >= lotMin && waferMax >= fs.length * 0.4))) {
+    if (fs.length >= 4 && ((fs.length / lotTotal >= 0.08 && waferMax >= 2) || (waferMax >= 4 && waferMax >= fs.length * 0.4))) {
       const wafers = new Set(fs.map((f) => compById.get(f.idx)!.waferId));
       fs.forEach((f) => lotSet.add(f.idx));
       events.push({
-        batchId, channelId: null, chamberZone: null, lotId: lot, eventType: "LOT_PROCESS_SHIFT",
+        channelId: null, chamberZone: null, lotId: lot, eventType: "LOT_PROCESS_SHIFT",
         startHour: null, endHour: null, affectedCount: fs.length,
         affectedIds: fs.map((f) => compById.get(f.idx)!.componentCode),
         correlation: { sameLot: fs.length, lotSize: lotTotal, wafersAffected: wafers.size, dominantWafer: wafers.size <= 2 },
@@ -206,7 +185,7 @@ export async function runPipeline(batchId: number) {
     });
   if (thermalCleared.length >= 3) {
     events.push({
-      batchId, channelId: null, chamberZone: "C09-C11 rows B-C (hot zone)", lotId: null, eventType: "THERMAL_COUPLING_CLEARED",
+      channelId: null, chamberZone: "C09-C11 rows B-C (hot zone)", lotId: null, eventType: "THERMAL_COUPLING_CLEARED",
       startHour: 0, endHour: 168, affectedCount: thermalCleared.length,
       affectedIds: thermalCleared.map((f) => compById.get(f.idx)!.componentCode),
       correlation: { zone: true, physicsResidualOk: true, rawModelFlags: thermalCleared.length },
@@ -223,26 +202,15 @@ export async function runPipeline(batchId: number) {
 
   for (const c of comps) {
     const f = feats.find((x) => x.idx === c.id)!;
-    if (f.n < minSamples) {
-      compUpdates.push({ id: c.id, patch: {
-        status: "unknown", decision: "MANUAL QC", riskLevel: "UNKNOWN", riskScore: null,
-        anomalyScore: null, healthScore: null, staticResult: f.n ? "PARTIAL DATA" : "NO DATA",
-        dynamicResult: "INSUFFICIENT", driftRisk: "UNKNOWN", hiddenAnomaly: false,
-        featureJson: { dataSufficiency: "LOW", validSamples: f.n, requiredSamples: minSamples },
-      } });
+    if (f.n < 10) {
+      compUpdates.push({ id: c.id, patch: { status: "unknown", decision: "MANUAL QC", riskLevel: "UNKNOWN", riskScore: null, staticResult: "NO DATA", dynamicResult: "INSUFFICIENT", driftRisk: "UNKNOWN" } });
       continue;
     }
     const AS = scoreA.get(c.id) ?? 0;
-    const fc = driftForecast(f, c.staticLeakLimitUa, forecastHorizonH); forecasts.set(c.id, fc);
+    const fc = driftForecast(f); forecasts.set(c.id, fc);
     const inEquip = equipSet.has(c.id), inLot = lotSet.has(c.id);
     const staticRes = f.staticFail ? "FAIL" : f.staticWarn ? "WARN" : "PASS";
     const dynAnom = AS >= 0.6;
-    const sampleConfidence = Math.min(1, f.n / 10);
-    const populationConfidence = Math.min(1, hasTel.length / 30);
-    const spanConfidence = Math.min(1, Math.max(0, f.lastHour - f.firstHour) / 48);
-    const evidenceConfidence = 0.45 + 0.2 * sampleConfidence + 0.2 * populationConfidence + 0.15 * spanConfidence;
-    const conf = +Math.max(0.25, Math.min(0.96,
-      evidenceConfidence * (0.82 + 0.18 * Math.min(1, Math.abs(f.zLast ?? 0) / 6)) - (inEquip ? 0.14 : 0))).toFixed(2);
     const sig = (dynAnom || f.staticFail) ? (() => {
       const vs = (byComp.get(c.id) ?? []).filter((p) => p.vth != null && p.leak != null);
       let corr = 0;
@@ -261,8 +229,7 @@ export async function runPipeline(batchId: number) {
     risk = Math.round(Math.min(100, Math.max(0, risk)));
     const level = risk > 80 ? "CRITICAL" : risk > 60 ? "REVIEW" : risk > 30 ? "WATCH" : "HEALTHY";
     let decision = inEquip ? "EQUIP HOLD" : risk > 80 ? "REJECT" : risk > 60 ? "REVIEW" : risk > 30 ? "WATCH" : "PASS";
-    if (!inEquip && risk > 60 && conf < 0.6) decision = "REVIEW";
-    const qualified = !dynAnom && fc.driftRisk === "LOW" && fc.conf > 0.8 && conf > 0.7 && f.staticFail === false && !f.staticWarn
+    const qualified = !dynAnom && fc.driftRisk === "LOW" && fc.conf > 0.8 && f.staticFail === false && !f.staticWarn
       && AS < 0.3 && Math.abs(f.slopePer24h) < 0.0028 && Math.abs(f.zLast ?? 0) < 1.05 && f.missingPct < 0.04;
     if (qualified) decision = "PASS-EARLY";
     const status = f.staticFail === false && (f.n < 20) ? "unknown"
@@ -271,6 +238,7 @@ export async function runPipeline(batchId: number) {
     const dynamicRes = dynAnom ? "ANOMALOUS" : "NORMAL";
     const hidden = staticRes !== "FAIL" && dynAnom;
     if (hidden) hiddenCount++;
+    const conf = +(0.62 + 0.3 * Math.min(1, Math.abs(f.zLast ?? 0) / 8) + (inEquip ? -0.14 : 0)).toFixed(2);
 
     const contributions = [
       { name: "Peer deviation (final hour)", value: +(((f.zLast ?? 0))).toFixed(2), pct: Math.min(100, Math.abs(f.zLast ?? 0) * 18) },
@@ -281,8 +249,7 @@ export async function runPipeline(batchId: number) {
       { name: "Residual volatility", value: +f.rollStd.toFixed(3), pct: Math.min(100, f.rollStd * 220) },
     ].sort((a, b) => b.pct - a.pct);
 
-    const limit = c.staticLeakLimitUa;
-    const cfTarget = fc.pred - (fc.pred > limit * 0.8 ? (fc.pred - limit * 0.75) : 0);
+    const cfTarget = fc.pred - (fc.pred > STATIC_LEAK_LIMIT * 0.8 ? (fc.pred - STATIC_LEAK_LIMIT * 0.75) : 0);
     const reasons = {
       summary: hidden
         ? "Static screen PASS, but dynamic model flags the unit as anomalous relative to population trajectory. Model-derived suggestion: "
@@ -291,11 +258,7 @@ export async function runPipeline(batchId: number) {
       counterfactual: dynAnom ? {
         text: `Model-derived suggestion: 168h leakage below ~${Math.max(0.4, cfTarget).toFixed(2)} µA, or drift slope below ${(fc.slopePer24h * 0.55).toFixed(3)} µA/24h, would bring risk under the REVIEW threshold.`,
       } : null,
-      inputs: {
-        anomalyScore: AS, driftRisk: fc.driftRisk, staticResult: staticRes, staticLimitUa: limit,
-        lotCorrelation: inLot, equipmentCorrelation: inEquip, missingPct: +(f.missingPct * 100).toFixed(1),
-        validSamples: f.n, cohortSize: hasTel.length, confidenceBasis: conf < 0.6 ? "LOW_DATA" : "STANDARD",
-      },
+      inputs: { anomalyScore: AS, driftRisk: fc.driftRisk, staticResult: staticRes, lotCorrelation: inLot, equipmentCorrelation: inEquip, missingPct: +(f.missingPct * 100).toFixed(1) },
     };
 
     compUpdates.push({
@@ -303,13 +266,7 @@ export async function runPipeline(batchId: number) {
         status, decision, riskLevel: level, riskScore: risk, healthScore: health,
         anomalyScore: AS, driftRisk: fc.driftRisk, driftSlope: +fc.slopePer24h.toFixed(4),
         staticResult: staticRes, dynamicResult: dynamicRes, hiddenAnomaly: hidden,
-        featureJson: {
-          contributions: contributions.slice(0, 6), zLast: +(f.zLast ?? 0).toFixed(2),
-          maxAbsZ: +(f.maxAbsZ ?? 0).toFixed(2), anomalyHour: f.anomalyHour,
-          scoreRaw: scoreB.get(c.id) ?? 0, activationEnergyEv: f.eaFit,
-          validSamples: f.n, cohortSize: hasTel.length,
-          dataSufficiency: conf >= 0.75 ? "HIGH" : conf >= 0.6 ? "MEDIUM" : "LOW",
-        },
+        featureJson: { contributions: contributions.slice(0, 6), zLast: +(f.zLast ?? 0).toFixed(2), maxAbsZ: +(f.maxAbsZ ?? 0).toFixed(2), anomalyHour: f.anomalyHour, scoreRaw: scoreB.get(c.id) ?? 0 },
       },
     });
 
@@ -324,7 +281,7 @@ export async function runPipeline(batchId: number) {
       });
     }
     predRows.push({
-      componentId: c.id, parameter: "leakage_ua", horizonH: forecastHorizonH, predictedValue: fc.pred,
+      componentId: c.id, parameter: "leakage_ua", horizonH: 168, predictedValue: fc.pred,
       lowerBound: fc.lo, upperBound: fc.hi, slopePer24h: +fc.slopePer24h.toFixed(4),
       timeToLimitH: fc.ttl, confidence: +fc.conf.toFixed(2), modelVersion: MODEL_DRIFT.version, curve: fc.curve,
     });
@@ -366,16 +323,14 @@ export async function runPipeline(batchId: number) {
   const benchAadj = hasTruth ? bench(scoreA, 0.6, equipSet) : null;
   const benchB = hasTruth ? bench(scoreB, bestThrB) : null;
 
-  // Drift backtest: fit the first 80% of each suitable series and predict its
-  // final observation. This works for both 168h demo files and shorter uploads.
+  // drift model metrics on normal units (train first 128h → predict 168h)
   let drMAE = 0, drRMSE = 0, drN = 0; const drAct: number[] = [], drPred: number[] = [];
   for (const c of comps) {
-    if (hasTruth && c.scenarioTag !== "normal") continue;
-    const pts = (byComp.get(c.id) ?? []).filter((p) => p.leak != null).sort((a, b) => a.hour - b.hour);
-    if (pts.length < Math.max(6, minSamples)) continue;
-    const cut = Math.max(4, Math.floor(pts.length * 0.8));
-    const train = pts.slice(0, cut), test = pts[pts.length - 1];
-    if (test.hour <= train[0].hour) continue;
+    if (c.scenarioTag !== "normal" && c.scenarioTag !== "uploaded") continue;
+    const pts = (byComp.get(c.id) ?? []).filter((p) => p.leak != null);
+    if (pts.length < 30) continue;
+    const train = pts.filter((p) => p.hour <= 128), test = pts[pts.length - 1];
+    if (train.length < 20 || test.hour < 160) continue;
     const fit = linFit(train.map((p) => p.hour), train.map((p) => p.leak!));
     const p = fit.a + fit.b * test.hour, e = Math.abs(p - test.leak!);
     drMAE += e; drRMSE += e * e; drN++; drAct.push(test.leak!); drPred.push(p);
@@ -391,7 +346,8 @@ export async function runPipeline(batchId: number) {
   const del = async (table: any, col: any) => { for (let i = 0; i < compIds.length; i += 500) await db.delete(table).where(inArray(col, compIds.slice(i, i + 500))); };
   await del(anomalies, anomalies.componentId); await del(predictions, predictions.componentId);
   await del(failureSignatures, failureSignatures.componentId); await del(riskAssessments, riskAssessments.componentId);
-  await db.delete(equipmentEvents).where(eq(equipmentEvents.batchId, batchId));
+  await db.delete(equipmentEvents).where(eq(equipmentEvents.id, -1)); // noop guard
+  await db.execute(`DELETE FROM equipment_events WHERE created_at > now() - interval '2 hours' OR event_type = ANY('{INSTRUMENTATION_EVENT,LOT_PROCESS_SHIFT,THERMAL_COUPLING_CLEARED}')`);
 
   const ins = async (table: any, rows: any[]) => { for (let i = 0; i < rows.length; i += 400) if (rows.slice(i, i + 400).length) await db.insert(table).values(rows.slice(i, i + 400)); };
   await ins(anomalies, anRows); await ins(predictions, predRows);
@@ -407,19 +363,14 @@ export async function runPipeline(batchId: number) {
     if (s.u.decision === "EQUIP HOLD") dist.equipHold++;
     if (st && dist[st as keyof typeof dist] != null) (dist as any)[st]++;
   }
-  const stride = Math.max(1, Math.ceil(observedHours.length / 180));
-  const chartHours = observedHours.filter((_, i) => i % stride === 0 || i === observedHours.length - 1);
   const hourMean: { hour: number; mean: number }[] = [];
-  for (const h of chartHours) {
+  for (const h of HOURS) {
     let s = 0, n = 0;
     for (const f of feats) { const p = f.normSeries.find((x) => x.hour === h); if (p) { s += p.v; n++; } }
-    if (n) hourMean.push({ hour: +h.toFixed(3), mean: +(s / n).toFixed(4) });
+    hourMean.push({ hour: h, mean: +(s / Math.max(1, n)).toFixed(4) });
   }
   const onsets = new Map<number, number>();
-  anRows.forEach((a) => {
-    const nearest = chartHours.reduce((best, h) => Math.abs(h - a.hour) < Math.abs(best - a.hour) ? h : best, chartHours[0]);
-    onsets.set(nearest, (onsets.get(nearest) ?? 0) + 1);
-  });
+  anRows.forEach((a) => onsets.set(a.hour, (onsets.get(a.hour) ?? 0) + 1));
   const lots = [...new Set(comps.map((c) => c.lotId))].map((lot) => {
     const cs = scored.filter((s) => s.c.lotId === lot);
     const fl = cs.filter((s) => (s.u.anomalyScore ?? 0) >= 0.6).length;
@@ -430,19 +381,9 @@ export async function runPipeline(batchId: number) {
     return { channel: ch, count: cs.length, flagged: cs.filter((s) => (s.u.anomalyScore ?? 0) >= 0.6).length };
   });
   const stats = {
-    dist, hourMean, onsetHist: chartHours.map((h) => ({ hour: +h.toFixed(3), count: onsets.get(h) ?? 0 })),
+    dist, hourMean, onsetHist: HOURS.map((h) => ({ hour: h, count: onsets.get(h) ?? 0 })),
     lots, channels, hiddenCount, flagged: flagged.length,
     pipelineMs: Date.now() - t0, analyzedAt: new Date().toISOString(),
-    analysisProfile: {
-      observedStartH: observedStart, observedEndH: observedEnd, forecastHorizonH,
-      typicalSamples, minimumSamples: minSamples, analyzedComponents: hasTel.length,
-      cohortConfidence: hasTel.length >= 30 ? "HIGH" : hasTel.length >= 10 ? "MEDIUM" : "LOW",
-      staticLimits: [...new Set(comps.map((c) => c.staticLeakLimitUa))],
-    },
-    validation: {
-      groundTruthAvailable: hasTruth, anomaly: benchA, anomalyPostDiscrimination: benchAadj,
-      driftBacktest: driftMetrics,
-    },
     decisionCounts: scored.reduce((acc: any, s) => { const d = s.u.decision ?? "NA"; acc[d] = (acc[d] ?? 0) + 1; return acc; }, {}),
   };
   await db.update(batches).set({ status: "analyzed", stats }).where(eq(batches.id, batchId));
@@ -453,21 +394,16 @@ export async function runPipeline(batchId: number) {
     if (existing.length) await db.update(modelRegistry).set({ metrics, active, notes, modelVersion: version }).where(eq(modelRegistry.id, existing[0].id));
     else await db.insert(modelRegistry).values({ modelName: name, modelVersion: version, type, datasetId: "DS-SYN-2026-0142", metrics, active, notes });
   };
-  // Only a labelled validation batch may update registry performance metrics.
-  // Unlabelled customer uploads store their run metrics inside batches.stats and
-  // never overwrite the controlled champion/challenger benchmark.
-  if (hasTruth) {
-    await upsertModel(MODEL_A.name, MODEL_A.version, "anomaly", {
-      ...(benchA ?? {}),
-      precisionAdj: benchAadj?.precision, fpRateAdj: benchAadj?.fpRate, f1Adj: benchAadj?.f1,
-      equipReclassified: equipSet.size, latencyMs: isoA.ms, samples: hasTel.length,
-    }, true,
-      "Champion. Physics-residual Isolation Forest with adaptive per-unit Arrhenius normalization. 120 trees, subsample 256. Adjusted metrics exclude instrument-cohort reclassifications.");
-    await upsertModel(MODEL_B.name, MODEL_B.version, "anomaly", { ...(benchB ?? {}), latencyMs: isoB.ms, samples: hasTel.length }, false,
-      "Challenger. Identical algorithm on raw un-normalized features — hot-zone thermal coupling inflates false positives.");
-    await upsertModel(MODEL_DRIFT.name, MODEL_DRIFT.version, "forecast", { ...(driftMetrics ?? {}), horizonH: forecastHorizonH }, true,
-      "Least-squares drift extrapolation with prediction interval on physics-normalized series. Model-derived estimates only.");
-  }
+  await upsertModel(MODEL_A.name, MODEL_A.version, "anomaly", {
+    ...(benchA ?? {}),
+    precisionAdj: benchAadj?.precision, fpRateAdj: benchAadj?.fpRate, f1Adj: benchAadj?.f1,
+    equipReclassified: equipSet.size, latencyMs: isoA.ms, samples: hasTel.length,
+  }, true,
+    "Champion. Physics-residual Isolation Forest with adaptive per-unit Arrhenius normalization. 120 trees, subsample 256. Adjusted metrics exclude instrument-cohort reclassifications.");
+  await upsertModel(MODEL_B.name, MODEL_B.version, "anomaly", { ...(benchB ?? {}), latencyMs: isoB.ms, samples: hasTel.length }, false,
+    "Challenger. Identical algorithm on raw un-normalized features — hot-zone thermal coupling inflates false positives.");
+  await upsertModel(MODEL_DRIFT.name, MODEL_DRIFT.version, "forecast", { ...(driftMetrics ?? {}), horizonH: 168 }, true,
+    "Least-squares drift extrapolation with prediction interval on physics-normalized series. Model-derived estimates only.");
 
   await db.insert(auditLog).values({
     userId: null, userName: "SYSTEM", action: "ANALYSIS_RUN", objectType: "batch", objectId: String(batchId),

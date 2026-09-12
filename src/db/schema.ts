@@ -27,7 +27,6 @@ export const batches = pgTable("batches", {
 export const components = pgTable("components", {
   id: serial("id").primaryKey(),
   componentCode: text("component_code").notNull().unique(),
-  sourceComponentCode: text("source_component_code"),
   batchId: integer("batch_id").notNull().references(() => batches.id),
   lotId: text("lot_id").notNull(),
   waferId: text("wafer_id").notNull(),
@@ -45,7 +44,6 @@ export const components = pgTable("components", {
   riskScore: real("risk_score"),
   riskLevel: text("risk_level"),
   decision: text("decision"),
-  staticLeakLimitUa: real("static_leak_limit_ua").notNull().default(5),
   staticResult: text("static_result"),
   dynamicResult: text("dynamic_result"),
   hiddenAnomaly: boolean("hidden_anomaly").default(false),
@@ -130,7 +128,6 @@ export const riskAssessments = pgTable("risk_assessments", {
 
 export const equipmentEvents = pgTable("equipment_events", {
   id: serial("id").primaryKey(),
-  batchId: integer("batch_id").notNull().references(() => batches.id),
   channelId: text("channel_id"),
   chamberZone: text("chamber_zone"),
   lotId: text("lot_id"),
@@ -143,7 +140,7 @@ export const equipmentEvents = pgTable("equipment_events", {
   confidence: text("confidence").notNull().default("medium"),
   assessment: text("assessment"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-}, (t) => [index("equipment_events_batch_idx").on(t.batchId)]);
+});
 
 export const feedback = pgTable("feedback", {
   id: serial("id").primaryKey(),

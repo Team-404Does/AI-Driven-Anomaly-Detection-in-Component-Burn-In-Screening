@@ -34,7 +34,7 @@ export default function PassportClient(props: any) {
   const pLabel = PLABELS[param];
   const pUnit = PUNITS[param];
   const vals = tel.map((t: any) => t[param]).filter((x: any) => x != null);
-  const limit = param === "l" ? (comp.staticLimit ?? 5) : null;
+  const limit = param === "l" ? 5 : null;
 
   const telOpt = useMemo(() => ({
     grid: { left: 48, right: 14, top: 30, bottom: 40 },
@@ -62,7 +62,7 @@ export default function PassportClient(props: any) {
         markLine: {
           silent: true, symbol: "none",
           data: [
-            ...(limit ? [{ yAxis: limit, lineStyle: { color: "#f87171", type: "dashed" as const }, label: { color: "#f87171", formatter: `STATIC LIMIT ${limit}`, fontSize: 9, position: "insideEndTop" as const } }] : []),
+            ...(limit ? [{ yAxis: limit, lineStyle: { color: "#f87171", type: "dashed" as const }, label: { color: "#f87171", formatter: "STATIC LIMIT 5.0", fontSize: 9, position: "insideEndTop" as const } }] : []),
             ...(anomaly ? [{ xAxis: String(anomaly.hour), lineStyle: { color: "#fb923c" }, label: { color: "#fb923c", formatter: `onset T+${anomaly.hour}h`, fontSize: 9 } }] : []),
           ],
         },
@@ -74,7 +74,7 @@ export default function PassportClient(props: any) {
     grid: { left: 48, right: 14, top: 30, bottom: 26 },
     tooltip: { ...TOOLTIP, trigger: "axis" },
     legend: { textStyle: { color: "#8b95a5", fontSize: 10 }, top: 2 },
-    xAxis: { type: "value", min: pred?.curve?.[0]?.hour ?? 0, max: pred?.curve?.[pred.curve.length - 1]?.hour ?? 336, ...AXIS, name: "hour", nameLocation: "middle" as const, nameGap: 22 },
+    xAxis: { type: "value", min: 0, max: 336, ...AXIS, name: "hour", nameLocation: "middle" as const, nameGap: 22 },
     yAxis: { type: "value", ...AXIS, name: "µA (physics-normalized)", scale: true },
     series: [
       { name: "Observed", type: "line", showSymbol: false, data: tel.filter((t: any) => t.l != null).map((t: any) => [t.h, +t.l.toFixed(3)]), lineStyle: { color: "#e2e8f0", width: 1.5 } },
@@ -121,7 +121,6 @@ export default function PassportClient(props: any) {
         <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[300px_1fr_auto]">
           <div className="rounded-md border border-line bg-[#0a0e13] p-3.5 font-mono text-[11.5px] leading-[1.75]">
             <div className="text-[14px] font-semibold tracking-wider text-sky-300">{comp.code}</div>
-            {comp.sourceCode && comp.sourceCode !== comp.code && <div className="text-[9px] text-fog">source ID: {comp.sourceCode}</div>}
             <div className="my-1 border-t border-dashed border-line2" />
             <div className="grid grid-cols-[104px_1fr] gap-x-2 text-fog">
               <span>Manufacturer</span><span className="text-snow">{comp.mfr}</span>

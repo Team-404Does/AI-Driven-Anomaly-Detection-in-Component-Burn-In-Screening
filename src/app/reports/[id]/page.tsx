@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { getReport } from "@/lib/queries";
-import { dt, fmt } from "@/lib/utils";
+import { dt, fmt, cn } from "@/lib/utils";
 import PrintButton from "@/components/print-button";
+import { STATUS_META } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -20,38 +21,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   if (!data) notFound();
   const { report, pass } = data;
   const c: any = report.content ?? {};
-  const liveComp = pass?.comp;
-  const ident: any = c.identification ?? (liveComp ? {
-    componentCode: liveComp.componentCode,
-    sourceComponentCode: liveComp.sourceComponentCode,
-    manufacturer: liveComp.manufacturer,
-    lotId: liveComp.lotId,
-    waferId: liveComp.waferId,
-    socketId: liveComp.socketId,
-    channelId: liveComp.channelId,
-    staticLimitUa: liveComp.staticLeakLimitUa,
-    staticResult: liveComp.staticResult,
-    dynamicResult: liveComp.dynamicResult,
-    decision: liveComp.decision,
-    riskScore: liveComp.riskScore,
-    riskLevel: liveComp.riskLevel,
-  } : null);
-  const tel: any[] = c.telemetry ?? (pass?.tel ?? []).map((point: any) => ({
-    hour: point.hour, leakageUa: point.leakageUa,
-  }));
+  const comp = pass?.comp;
+  const tel = pass?.tel ?? [];
 
-  // Inline SVG observed trace for the print document.
+  // inline SVG observed trace for the print document
   const W = 560, H = 130;
-  const leaks = tel.filter((point: any) => point.leakageUa != null);
-  const staticLimit = ident?.staticLimitUa ?? 5;
-  const startHour = leaks[0]?.hour ?? 0;
-  const endHour = leaks[leaks.length - 1]?.hour ?? Math.max(168, startHour + 1);
-  const spanH = Math.max(1, endHour - startHour);
-  const maxY = Math.max(staticLimit * 1.1, ...leaks.map((point: any) => point.leakageUa!), 1) * 1.1;
-  const x = (hour: number) => 34 + ((hour - startHour) / spanH) * (W - 42);
-  const y = (value: number) => H - 18 - (value / maxY) * (H - 30);
-  const path = leaks.map((point: any, index: number) => `${index === 0 ? "M" : "L"}${x(point.hour).toFixed(1)},${y(point.leakageUa!).toFixed(1)}`).join(" ");
-  const tickHours = [startHour, startHour + spanH / 2, endHour];
+  const leaks = tel.filter((t: any) => t.leakageUa != null);
+  const maxY = Math.max(5.5, ...leaks.map((t: any) => t.leakageUa!)) * 1.1;
+  const x = (h: number) => 34 + (h / 168) * (W - 42);
+  const y = (v: number) => H - 18 - (v / maxY) * (H - 30);
+  const path = leaks.map((t: any, i: number) => `${i === 0 ? "M" : "L"}${x(t.hour).toFixed(1)},${y(t.leakageUa!).toFixed(1)}`).join(" ");
 
   const section = "rounded-lg border border-line bg-panel p-4 print-card";
   return (
@@ -75,21 +54,21 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
 
-        {ident && (
+        {comp && (
           <div className={section}>
             <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-fog">1 · Identification</h2>
             <div className="grid grid-cols-2 gap-x-8">
               <div>
-                <Row label="Component">{ident.componentCode}{ident.sourceComponentCode && ident.sourceComponentCode !== ident.componentCode ? ` (source: ${ident.sourceComponentCode})` : ""}</Row>
-                <Row label="Manufacturer">{ident.manufacturer}</Row>
-                <Row label="Lot / Wafer">{ident.lotId} / {ident.waferId}</Row>
-                <Row label="Socket / Channel">{ident.socketId} / {ident.channelId}</Row>
+                <Row label="Component">{comp.componentCode}</Row>
+                <Row label="Manufacturer">{comp.manufacturer}</Row>
+                <Row label="Lot / Wafer">{comp.lotId} / {comp.waferId}</Row>
+                <Row label="Socket / Channel">{comp.socketId} / {comp.channelId}</Row>
               </div>
               <div>
-                <Row label="Static screen">{ident.staticResult}</Row>
-                <Row label="Dynamic model">{ident.dynamicResult}</Row>
-                <Row label="Decision">{ident.decision}</Row>
-                <Row label="Risk score">{ident.riskScore != null ? `${ident.riskScore}/100 · ${ident.riskLevel}` : "—"}</Row>
+                <Row label="Static screen">{comp.staticResult}</Row>
+                <Row label="Dynamic model">{comp.dynamicResult}</Row>
+                <Row label="Decision">{comp.decision}</Row>
+                <Row label="Risk score">{comp.riskScore != null ? `${comp.riskScore}/100 · ${comp.riskLevel}` : "—"}</Row>
               </div>
             </div>
           </div>
@@ -99,11 +78,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-fog">2 · Observed telemetry — leakage (µA) vs static limit</h2>
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
             <rect x="0" y="0" width={W} height={H} fill="none" />
-            <line x1={34} x2={W - 8} y1={y(staticLimit)} y2={y(staticLimit)} stroke="#f87171" strokeDasharray="5 4" strokeWidth="1" />
-            <text x={W - 12} y={y(staticLimit) - 4} fill="#f87171" fontSize="9" textAnchor="end" fontFamily="monospace">STATIC LIMIT {staticLimit.toFixed(3)} µA</text>
+            <line x1={34} x2={W - 8} y1={y(5)} y2={y(5)} stroke="#f87171" strokeDasharray="5 4" strokeWidth="1" />
+            <text x={W - 12} y={y(5) - 4} fill="#f87171" fontSize="9" textAnchor="end" fontFamily="monospace">STATIC LIMIT 5.0 µA</text>
             {c.anomaly && <line x1={x(c.anomaly.hour)} x2={x(c.anomaly.hour)} y1={8} y2={H - 18} stroke="#fb923c" strokeWidth="1" />}
             <path d={path} fill="none" stroke="#dce3ec" strokeWidth="1.4" className="print:[stroke:#111]" />
-            {tickHours.map((hour) => <text key={hour} x={x(hour)} y={H - 4} fill="#8b95a5" fontSize="9" textAnchor="middle" fontFamily="monospace">{hour.toFixed(hour % 1 ? 1 : 0)}h</text>)}
+            {[0, 84, 168].map((h) => <text key={h} x={x(h)} y={H - 4} fill="#8b95a5" fontSize="9" textAnchor="middle" fontFamily="monospace">{h}h</text>)}
           </svg>
           {c.anomaly && (
             <div className="mt-2 grid grid-cols-4 gap-2 text-[11px]">
@@ -147,7 +126,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             ) : <p className="text-[11px] text-fog">No signature above attribution threshold.</p>}
           </div>
           <div className={section}>
-            <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-fog">5 · {c.forecast?.horizonH ?? 168}h forward forecast</h2>
+            <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-fog">5 · 168h forecast</h2>
             {c.forecast ? (
               <div className="space-y-1 font-mono text-[11.5px]">
                 <div className="flex justify-between"><span className="text-fog">predicted</span><span>{fmt(c.forecast.predictedValue)} µA</span></div>

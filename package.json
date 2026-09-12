@@ -1,6 +1,9 @@
 {
   "name": "nextjs-postgresql-template",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,7 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "csv-parse": "^7.0.2",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
     "echarts": "^6.1.0",

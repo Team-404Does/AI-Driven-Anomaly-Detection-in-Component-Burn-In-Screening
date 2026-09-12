@@ -24,7 +24,7 @@ export default async function ChamberPage({ searchParams }: { searchParams: Prom
       lastLeak: sql<number>`(array_agg(${telemetry.leakageUa} ORDER BY ${telemetry.hour} DESC))[1]`,
     }).from(telemetry).where(inArray(telemetry.componentId, ids)).groupBy(telemetry.componentId);
   }
-  const events = await getEquipmentEvents(batch.id);
+  const events = await getEquipmentEvents();
   const stats: any = batch.stats ?? {};
 
   return (

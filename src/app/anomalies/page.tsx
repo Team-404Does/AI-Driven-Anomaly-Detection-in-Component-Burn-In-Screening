@@ -9,7 +9,7 @@ export default async function AnomaliesPage({ searchParams }: { searchParams: Pr
   const batch = await getActiveBatch();
   if (!batch) return null;
   const queue = await getAnomalyQueue(batch.id);
-  const events = await getEquipmentEvents(batch.id);
+  const events = await getEquipmentEvents();
   return (
     <div className="fade-in space-y-3">
       <PageHead

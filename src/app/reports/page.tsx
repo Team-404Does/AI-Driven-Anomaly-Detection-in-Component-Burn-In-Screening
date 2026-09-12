@@ -1,22 +1,18 @@
 import Link from "next/link";
 import { Card, CardHead, PageHead, Empty, Tag } from "@/components/ui";
-import { getActiveBatch, getComponents, getReports } from "@/lib/queries";
+import { getReports } from "@/lib/queries";
 import { dt } from "@/lib/utils";
 import { FileText, ArrowUpRight } from "lucide-react";
-import ReportGenerator from "@/components/report-generator";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReportsPage() {
   const rows = await getReports();
-  const batch = await getActiveBatch();
-  const candidates = batch ? (await getComponents(batch.id, { pageSize: 40 })).rows : [];
   return (
     <div className="fade-in space-y-3">
       <PageHead
         title="Engineering Reports"
-        sub="Prototype NCR-style and engineering-assessment exports with versioned evidence. Generate directly from the active batch or from a Digital Passport."
-        right={<ReportGenerator candidates={candidates.map((c) => ({ code: c.componentCode, decision: c.decision, risk: c.riskScore }))} />}
+        sub="Prototype NCR-style and engineering-assessment exports with full evidence chain. Generate from any component passport."
       />
       <Card>
         <CardHead title={`${rows.length} reports`} sub="print-to-PDF via browser — designed as formal engineering documents" />

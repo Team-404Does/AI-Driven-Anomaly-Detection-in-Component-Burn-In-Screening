@@ -15,9 +15,8 @@ export default async function PassportPage({ params }: { params: Promise<{ code:
   return (
     <PassportClient
       comp={{
-        code: comp.componentCode, sourceCode: comp.sourceComponentCode, mfr: comp.manufacturer, lot: comp.lotId, wafer: comp.waferId,
+        code: comp.componentCode, mfr: comp.manufacturer, lot: comp.lotId, wafer: comp.waferId,
         socket: comp.socketId, channel: comp.channelId, status: comp.status, decision: comp.decision,
-        staticLimit: comp.staticLeakLimitUa,
         health: comp.healthScore, as: comp.anomalyScore, driftRisk: comp.driftRisk,
         riskScore: comp.riskScore, riskLevel: comp.riskLevel, staticResult: comp.staticResult,
         dynamicResult: comp.dynamicResult, hidden: comp.hiddenAnomaly, feature: comp.featureJson as any,

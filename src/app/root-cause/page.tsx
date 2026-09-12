@@ -15,7 +15,7 @@ export default async function RootCausePage() {
   const sigs = await db.select({ s: failureSignatures, c: components })
     .from(failureSignatures).innerJoin(components, eq(failureSignatures.componentId, components.id))
     .where(eq(components.batchId, batch.id)).orderBy(desc(failureSignatures.probability));
-  const events = await getEquipmentEvents(batch.id);
+  const events = await getEquipmentEvents();
 
   const bySig = new Map<string, number>();
   sigs.forEach(({ s }) => bySig.set(s.signature, (bySig.get(s.signature) ?? 0) + 1));

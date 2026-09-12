@@ -15,7 +15,7 @@ export default async function Overview() {
   const quality: any = batch.dataQuality ?? {};
   const dist = stats.dist ?? {};
   const queue = (await getAnomalyQueue(batch.id)).slice(0, 6);
-  const events = await getEquipmentEvents(batch.id);
+  const events = await getEquipmentEvents();
   const audit = await getAudit(1, 8);
 
   const hours = (stats.hourMean ?? []).map((h: any) => h.hour);
