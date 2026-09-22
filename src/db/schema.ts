@@ -6,7 +6,10 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  role: text("role").notNull().default("qa_engineer"),
+  role: text("role").notNull().default("worker"),
+  // Nullable on purpose: drizzle-kit push adds this column to a table that already
+  // has rows, and a user without a hash simply cannot sign in.
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

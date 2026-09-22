@@ -4,10 +4,15 @@ import { db } from "@/db";
 import { anomalies, auditLog, components, failureSignatures, predictions, reports, riskAssessments } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { MODEL_A, MODEL_DRIFT } from "@/lib/ml/pipeline";
+import { requireApiRole } from "@/lib/auth";
+import { ROLES } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  // Issuing an NCR / engineering assessment is a disposition action: expert role only.
+  const guard = await requireApiRole([ROLES.EXPERT]);
+  if (!guard.user) return guard.res;
   const body = await req.json().catch(() => null);
   if (!body?.componentCode) return NextResponse.json({ error: "componentCode required" }, { status: 400 });
   const [comp] = await db.select().from(components).where(eq(components.componentCode, body.componentCode));
@@ -38,11 +43,11 @@ export async function POST(req: Request) {
       dataset: "DS-SYN-2026-0142",
       disclaimer: "Prototype engineering assessment for decision support. Candidate mechanisms are model-derived and require engineering validation. Not an official ISRO document.",
     },
-    generatedBy: body.generatedBy ?? "QA Operator",
+    generatedBy: guard.user.name,
     modelVersion: `${MODEL_A.name} ${MODEL_A.version}`,
   }).returning();
   await db.insert(auditLog).values({
-    userName: body.generatedBy ?? "QA Operator", action: "REPORT_GENERATED", objectType: "report",
+    userId: guard.user.uid, userName: guard.user.name, action: "REPORT_GENERATED", objectType: "report",
     objectId: row.reportCode,
     detail: { component: comp.componentCode, type: row.reportType, model: row.modelVersion },
   });

@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { components, predictions, telemetry } from "@/db/schema";
 import { asc, eq } from "drizzle-orm";
+import { requireApiRole } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  const guard = await requireApiRole();
+  if (!guard.user) return guard.res;
   const code = new URL(req.url).searchParams.get("code") ?? "";
   const [comp] = await db.select().from(components).where(eq(components.componentCode, code));
   if (!comp) return NextResponse.json({ error: "not found" }, { status: 404 });

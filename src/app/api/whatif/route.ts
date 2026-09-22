@@ -6,10 +6,13 @@ import { auditLog, components, predictions } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { arrFactor } from "@/lib/sim/generator";
 import { MODEL_DRIFT } from "@/lib/ml/pipeline";
+import { requireApiRole } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  const guard = await requireApiRole();
+  if (!guard.user) return guard.res;
   const body = await req.json().catch(() => null);
   if (!body?.componentCode) return NextResponse.json({ error: "componentCode required" }, { status: 400 });
   const tempC = Math.max(85, Math.min(175, Number(body.tempC ?? 125)));
@@ -61,7 +64,7 @@ export async function POST(req: Request) {
     ],
   };
   await db.insert(auditLog).values({
-    userName: "OPERATOR", action: "WHAT_IF_RUN", objectType: "component",
+    userId: guard.user.uid, userName: guard.user.name, action: "WHAT_IF_RUN", objectType: "component",
     objectId: comp.componentCode, detail: { tempC, voltage, durationH, AF: +AF.toFixed(3), riskAfter, model: payload.modelVersion },
   });
   return NextResponse.json(payload);

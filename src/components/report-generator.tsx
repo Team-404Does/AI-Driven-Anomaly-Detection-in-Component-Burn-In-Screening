@@ -19,7 +19,7 @@ export default function ReportGenerator({ candidates }: { candidates: Array<{ co
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ componentCode: code, type, generatedBy: "R. Nair" }),
+        body: JSON.stringify({ componentCode: code, type }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Report generation failed");

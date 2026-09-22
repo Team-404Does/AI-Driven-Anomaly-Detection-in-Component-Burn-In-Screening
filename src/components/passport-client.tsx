@@ -100,14 +100,19 @@ export default function PassportClient(props: any) {
 
   const sendFeedback = async (label: string) => {
     setBusy(true);
-    await fetch("/api/feedback", { method: "POST", body: JSON.stringify({ componentCode: comp.code, label, userName: "R. Nair" }) });
+    await fetch("/api/feedback", { method: "POST", body: JSON.stringify({ componentCode: comp.code, label }) });
     setFbMsg(`Stored “${label.replaceAll("_", " ")}” in the controlled feedback queue (no automatic retraining).`);
     setBusy(false); router.refresh();
   };
   const genReport = async (type: string) => {
     setBusy(true);
-    const r = await fetch("/api/reports", { method: "POST", body: JSON.stringify({ componentCode: comp.code, type }) }).then((x) => x.json());
+    const res = await fetch("/api/reports", { method: "POST", body: JSON.stringify({ componentCode: comp.code, type }) });
+    const r = await res.json().catch(() => ({}));
     setBusy(false);
+    if (!res.ok) {
+      setReportMsg(r.error === "insufficient role" ? "NCR generation requires the industrial-expert role." : r.error ?? "Report generation failed.");
+      return;
+    }
     if (r.id) setReportMsg(`${r.code} generated`);
     router.refresh();
   };
