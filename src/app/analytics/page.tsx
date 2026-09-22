@@ -3,8 +3,7 @@ import EChart, { AXIS, TOOLTIP } from "@/components/echart";
 import { getActiveBatch, batchKbMarginals } from "@/lib/queries";
 import { db } from "@/db";
 import { components, telemetry } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -37,21 +36,23 @@ export default async function AnalyticsPage() {
     xAxis: { type: "category", data: hist.map((_, i) => ((i / NB) * hMax).toFixed(2)), ...AXIS, name: "µA", nameGap: 18, nameLocation: "middle" as const },
     yAxis: { type: "value", ...AXIS },
     series: [{
-      type: "bar", data: hist, barWidth: "72%",
-      itemStyle: { color: (p: any) => (p.dataIndex / NB) * hMax > 5 ? "#f87171" : (p.dataIndex / NB) * hMax > 4 ? "#fbbf24" : "#38bdf8aa" },
+      type: "bar", barWidth: "72%",
+      // precomputed per-bin colors (server-renderable; no function props)
+      data: hist.map((n, i) => ({ value: n, itemStyle: { color: (i / NB) * hMax > 5 ? "#f87171" : (i / NB) * hMax > 4 ? "#fbbf24" : "#38bdf8aa" } })),
       markLine: { silent: true, symbol: "none", lineStyle: { color: "#f87171", type: "dashed" }, data: [{ xAxis: Math.floor((5 / hMax) * NB), label: { color: "#f87171", formatter: "STATIC LIMIT 5.0 µA", fontSize: 10 } }] },
     }],
   };
 
   const scatterOpt = {
     grid: { left: 46, right: 16, top: 26, bottom: 24 },
-    tooltip: { ...TOOLTIP, formatter: (p: any) => `<b>${p.data[3]}</b><br/>temp ${p.data[0].toFixed(2)}°C<br/>last leak ${p.data[1].toFixed(3)} µA<br/>${p.data[4]}` },
+    tooltip: { ...TOOLTIP, formatter: { __fn: { use: "formatter", desc: { kind: "scatterTempLeak" } } } },
     xAxis: { type: "value", ...AXIS, name: "mean chamber °C", nameLocation: "middle" as const, nameGap: 24 },
     yAxis: { type: "value", ...AXIS, name: "µA" },
     series: [{
-      type: "scatter", symbolSize: (d: any) => (d[2] > 0.6 ? 7 : 4),
+      type: "scatter",
+      symbolSize: { __fn: { use: "color", desc: { kind: "scatterSymbol" } } },
       data: perComp.filter((p) => p.lastLeak != null && p.meanTemp != null).map((p) => [+p.meanTemp!.toFixed(2), +p.lastLeak!.toFixed(3), p.ascore ?? 0, p.code, p.status]),
-      itemStyle: { color: (p: any) => ({ healthy: "#34d39966", watch: "#fbbf24cc", critical: "#f87171ee", qualified: "#38bdf866", unknown: "#5b667599" } as any)[p.data[4]] ?? "#5b667599" },
+      itemStyle: { color: { __fn: { use: "color", desc: { kind: "scatterTempLeak" } } } },
     }],
   };
 
@@ -89,7 +90,7 @@ export default async function AnalyticsPage() {
 
   const corrOpt = {
     grid: { left: 50, right: 12, top: 24, bottom: 24 },
-    tooltip: { ...TOOLTIP, formatter: (p: any) => `T+${p.data[0]}h · median ${p.data[1].toFixed(3)} µA` },
+    tooltip: { ...TOOLTIP, formatter: { __fn: { use: "formatter", desc: { kind: "hourMedian" } } } },
     xAxis: { type: "value", min: 0, max: 168, ...AXIS, name: "hour", nameLocation: "middle" as const, nameGap: 22 },
     yAxis: { type: "value", ...AXIS, name: "µA" },
     series: [

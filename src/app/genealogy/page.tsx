@@ -18,7 +18,8 @@ export default async function GenealogyPage({ searchParams }: { searchParams: Pr
 
   const rateOpt = {
     grid: { left: 90, right: 30, top: 10, bottom: 24 },
-    tooltip: { ...TOOLTIP, formatter: (p: any) => `${p.name}: ${p.value}% flagged` },
+    // descriptor → client-side formatter (functions can't cross the RSC boundary)
+    tooltip: { ...TOOLTIP, formatter: { __fn: { use: "formatter", desc: { kind: "percent" } } } },
     xAxis: { type: "value", ...AXIS, name: "%", nameLocation: "middle" as const, nameGap: 20 },
     yAxis: { type: "category", data: tree.map((l: any) => l.lot), ...AXIS },
     series: [{

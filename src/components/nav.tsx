@@ -47,8 +47,8 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
 
   useEffect(() => { if (paletteOpen) setTimeout(() => inputRef.current?.focus(), 30); }, [paletteOpen]);
   useEffect(() => {
-    if (q.length < 2) { setResults([]); return; }
     const t = setTimeout(async () => {
+      if (q.length < 2) { setResults([]); return; }
       const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`).then((x) => x.json());
       setResults(r.results ?? []);
     }, 160);

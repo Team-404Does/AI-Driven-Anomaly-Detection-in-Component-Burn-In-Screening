@@ -17,8 +17,12 @@ export default function LabClient({ candidates }: { candidates: any[] }) {
 
   useEffect(() => {
     if (!code) return;
-    setData(null); setSim(null);
-    fetch(`/api/forecast?code=${encodeURIComponent(code)}`).then((r) => r.json()).then(setData);
+    let cancelled = false;
+    fetch(`/api/forecast?code=${encodeURIComponent(code)}`)
+      .then((r) => r.json())
+      .then((j) => { if (!cancelled) { setSim(null); setData(j); } })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [code]);
 
   const opt = useMemo(() => {

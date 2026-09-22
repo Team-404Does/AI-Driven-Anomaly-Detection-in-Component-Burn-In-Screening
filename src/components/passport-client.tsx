@@ -68,7 +68,7 @@ export default function PassportClient(props: any) {
         },
       },
     ].filter(Boolean),
-  }), [tel, corridor, param, anomaly]);
+  }), [tel, corridor, param, anomaly, limit, pUnit]);
 
   const fcOpt = useMemo(() => pred ? ({
     grid: { left: 48, right: 14, top: 30, bottom: 26 },

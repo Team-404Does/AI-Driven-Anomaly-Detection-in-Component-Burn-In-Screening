@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Play, Pause, SkipForward, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,12 +39,12 @@ export default function Replay({ tel, peerTel, anomalyHour, limit = 5 }: {
   }, [playing, speed, tel.length]);
 
   const W = 640, H = 170, PL = 40, PR = 8, PB = 20;
-  const x = (h: number) => PL + (h / maxH) * (W - PL - PR);
   const yMax = Math.max(limit * 1.4, ...tel.map((p) => p.l ?? 0)) * 1.08;
-  const y = (v: number) => H - PB - (v / yMax) * (H - PB - 12);
+  const x = useCallback((h: number) => PL + (h / maxH) * (W - PL - PR), [maxH]);
+  const y = useCallback((v: number) => H - PB - (v / yMax) * (H - PB - 12), [yMax]);
   const shown = tel.slice(0, cursor + 1);
-  const path = useMemo(() => shown.filter((p) => p.l != null).map((p, i) => `${i === 0 ? "M" : "L"}${x(p.h).toFixed(1)},${y(p.l!).toFixed(1)}`).join(" "), [cursor, tel]);
-  const peerPath = useMemo(() => (peerTel ?? []).filter((p) => p.l != null).map((p, i) => `${i === 0 ? "M" : "L"}${x(p.h).toFixed(1)},${y(p.l!).toFixed(1)}`).join(" "), [peerTel, showPeer]);
+  const path = useMemo(() => shown.filter((p) => p.l != null).map((p, i) => `${i === 0 ? "M" : "L"}${x(p.h).toFixed(1)},${y(p.l!).toFixed(1)}`).join(" "), [shown, x, y]);
+  const peerPath = useMemo(() => (peerTel ?? []).filter((p) => p.l != null).map((p, i) => `${i === 0 ? "M" : "L"}${x(p.h).toFixed(1)},${y(p.l!).toFixed(1)}`).join(" "), [peerTel, x, y]);
   const cur = shown[shown.length - 1];
   const curH = cur?.h ?? 0;
   const state = stateAt(curH);
