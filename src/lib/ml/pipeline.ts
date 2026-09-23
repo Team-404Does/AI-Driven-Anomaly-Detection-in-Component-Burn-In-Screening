@@ -51,11 +51,7 @@ function signatureFor(f: SeriesFeat, isoScore: number, inEquip: boolean, telMean
   return { probs, top: probs[0].signature, evidence, confText: topP >= 65 ? "HIGH" : topP >= 40 ? "MEDIUM" : "LOW" };
 }
 
-export interface Actor { userId?: number | null; userName: string; }
-
-// The actor is supplied by the caller so ANALYSIS_RUN is attributed to the signed-in
-// user rather than a placeholder name.
-export async function runPipeline(batchId: number, actor: Actor = { userId: null, userName: "SYSTEM" }) {
+export async function runPipeline(batchId: number) {
   const t0 = Date.now();
   const comps = await db.select().from(components).where(eq(components.batchId, batchId));
   const telRows = await db.select().from(telemetry)
@@ -410,7 +406,7 @@ export async function runPipeline(batchId: number, actor: Actor = { userId: null
     "Least-squares drift extrapolation with prediction interval on physics-normalized series. Model-derived estimates only.");
 
   await db.insert(auditLog).values({
-    userId: actor.userId ?? null, userName: actor.userName, action: "ANALYSIS_RUN", objectType: "batch", objectId: String(batchId),
+    userId: null, userName: "SYSTEM", action: "ANALYSIS_RUN", objectType: "batch", objectId: String(batchId),
     detail: { batchId, anomalies: anRows.length, events: events.length, pipelineMs: Date.now() - t0, model: `${MODEL_A.name} ${MODEL_A.version}` },
   });
   return { anomalies: anRows.length, events: events.length, flagged: flagged.length, pipelineMs: Date.now() - t0 };

@@ -478,42 +478,19 @@ Duplicates are dropped; missing samples are flagged rather than silently imputed
 
 ---
 
-## Roles and Access Control
-
-The application requires sign-in. Two roles are enforced in the API layer, not only in the interface:
-
-| Capability | Burn-In Operator | Industrial Expert |
-|---|:--:|:--:|
-| View dashboards, components, anomalies, audit trail | yes | yes |
-| Upload a burn-in batch, run analysis, run what-if scenarios | yes | yes |
-| Submit triage feedback | yes (recorded as an operator recommendation) | yes (recorded as a disposition) |
-| Generate an NCR / engineering assessment | no | yes |
-| Force reseed the reference dataset | no | yes |
-
-Authentication is self-contained: passwords are hashed with Node's built-in `scrypt` and sessions are
-HMAC-SHA256 signed cookies, so there is no external identity provider and no additional dependency.
-Demo accounts and their credentials are listed on the sign-in screen. Their password hashes are created
-or repaired on boot by `ensureDemoUsers()`, so a database that predates the password column is migrated
-automatically instead of requiring a destructive reseed.
-
-Sessions are signed with the `SESSION_SECRET` environment variable and expire after 12 hours. Sign-in
-attempts are throttled in process memory (six failures per address per five minutes) - adequate for a
-single-instance prototype, and explicitly **not** distributed.
-
----
 ## API Routes
 
-| Method | Route | Purpose | Access |
+| Method | Route | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Database-backed service health | public |
-| `POST` | `/api/analyze` | Run the full analysis pipeline for a batch | signed in |
-| `POST` | `/api/upload` | Validate, persist, and analyze CSV telemetry | signed in |
-| `GET` | `/api/forecast?code=COMP-...` | Retrieve telemetry and forecast data | signed in |
-| `POST` | `/api/whatif` | Run an audited stress-condition scenario | signed in |
-| `POST` | `/api/feedback` | Add an engineer label to the controlled queue | signed in |
-| `POST` | `/api/reports` | Generate an NCR-style or assessment report | expert only |
-| `GET` | `/api/search?q=COMP` | Search the component registry | signed in |
-| `GET/POST` | `/api/seed` | Initialize the synthetic demonstration dataset | `POST` expert only |
+| `GET` | `/api/health` | Database-backed service health |
+| `POST` | `/api/analyze` | Run the full analysis pipeline for a batch |
+| `POST` | `/api/upload` | Validate, persist, and analyze CSV telemetry |
+| `GET` | `/api/forecast?code=COMP-...` | Retrieve telemetry and forecast data |
+| `POST` | `/api/whatif` | Run an audited stress-condition scenario |
+| `POST` | `/api/feedback` | Add an engineer label to the controlled queue |
+| `POST` | `/api/reports` | Generate an NCR-style or assessment report |
+| `GET` | `/api/search?q=COMP` | Search the component registry |
+| `GET/POST` | `/api/seed` | Initialize the synthetic demonstration dataset |
 
 Example What-If request:
 
@@ -677,7 +654,7 @@ Specifically:
 
 ## Roadmap
 
-- [x] Authentication and enforced RBAC (Burn-In Operator / Industrial Expert roles, signed session cookies)
+- [ ] Authentication and enforced RBAC
 - [ ] Controlled schema migrations
 - [ ] Object storage for source files and generated PDF artifacts
 - [ ] Background analysis jobs with progress events

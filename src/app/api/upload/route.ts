@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { auditLog, batches, components, telemetry } from "@/db/schema";
 import { runPipeline } from "@/lib/ml/pipeline";
-import { requireApiRole } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
@@ -11,8 +10,6 @@ export const maxDuration = 180;
 const REQUIRED = ["component_code", "hour", "leakage_ua"];
 
 export async function POST(req: Request) {
-  const guard = await requireApiRole();
-  if (!guard.user) return guard.res;
   const text = await req.text();
   if (!text || text.length < 50) return NextResponse.json({ error: "empty file" }, { status: 400 });
   if (text.length > 40_000_000) return NextResponse.json({ error: "file too large (40MB max)" }, { status: 413 });
@@ -100,9 +97,9 @@ export async function POST(req: Request) {
       rdsMohm: r.rds, chamberTempC: r.temp, vdsStressV: r.vds, channelId: r.channel,
     })));
   }
-  const result = await runPipeline(batch.id, { userId: guard.user.uid, userName: guard.user.name });
+  const result = await runPipeline(batch.id);
   await db.insert(auditLog).values({
-    userId: guard.user.uid, userName: guard.user.name, action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
+    userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
     detail: { components: codes.length, rows: rows.length, qualityScore: quality.score },
   });
   return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, ...result });

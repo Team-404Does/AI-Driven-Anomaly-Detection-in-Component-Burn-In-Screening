@@ -1,9 +1,8 @@
 import { db } from "@/db";
-import { batches, components, telemetry } from "@/db/schema";
+import { batches, components, telemetry, users } from "@/db/schema";
 import { generateBatch, TEST_START } from "@/lib/sim/generator";
 import { runPipeline } from "@/lib/ml/pipeline";
-import { ensureDemoUsers } from "@/lib/demo-users";
-import { count, eq } from "drizzle-orm";
+import { count } from "drizzle-orm";
 
 let seeding: Promise<any> | null = null;
 
@@ -11,17 +10,15 @@ export async function ensureSeeded(force = false) {
   if (seeding) return seeding;
   seeding = (async () => {
     const [{ value }] = await db.select({ value: count() }).from(batches);
-    if (value > 0 && !force) {
-      // Batch data is already present, but the demo logins still have to work.
-      const accounts = await ensureDemoUsers();
-      return { seeded: false, ...accounts };
-    }
+    if (value > 0 && !force) return { seeded: false };
     if (force) {
       await db.execute(`TRUNCATE telemetry, anomalies, predictions, failure_signatures, risk_assessments, equipment_events, feedback, audit_log, reports, components, batches, model_registry, users RESTART IDENTITY CASCADE`);
-      await ensureDemoUsers(true);
-    } else {
-      await ensureDemoUsers();
     }
+    await db.insert(users).values([
+      { name: "R. Nair", email: "r.nair@qa.example", role: "qa_lead" },
+      { name: "S. Iyer", email: "s.iyer@qa.example", role: "qa_engineer" },
+      { name: "A. Kulkarni", email: "a.kulkarni@qa.example", role: "reliability_engineer" },
+    ]).onConflictDoNothing();
 
     const [batch] = await db.insert(batches).values({
       batchCode: "BN-2026-0142", manufacturer: "SCL",
@@ -51,12 +48,15 @@ export async function ensureSeeded(force = false) {
       }));
       await db.insert(telemetry).values(rows);
     }
-    await db.update(batches).set({ dataQuality: quality }).where(eq(batches.id, batch.id));
+    await db.update(batches).set({ dataQuality: quality }).where(eq2(batch.id));
 
     const t0 = Date.now();
     const result = await runPipeline(batch.id);
-    await db.update(batches).set({ status: "analyzed" }).where(eq(batches.id, batch.id));
+    await db.update(batches).set({ status: "analyzed" }).where(eq2(batch.id));
     return { seeded: true, batchId: batch.id, seedMs: Date.now() - t0, ...result };
   })().finally(() => { setTimeout(() => (seeding = null), 60_000); });
   return seeding;
 }
+
+import { eq as _eq } from "drizzle-orm";
+const eq2 = (id: number) => _eq(batches.id, id);

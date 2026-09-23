@@ -8,7 +8,6 @@ import {
   GitBranch, FileText, ClipboardList, Activity, Search, Radio, Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ROLE_LABELS, type Role } from "@/lib/roles";
 
 const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard, key: "G" },
@@ -25,13 +24,7 @@ const NAV = [
 
 interface BatchLite { id: number; batchCode: string; status: string; componentCount: number; }
 
-export interface ShellUser { name: string; email: string; role: Role; }
-
-function initialsOf(name: string) {
-  return name.split(/s+/).filter(Boolean).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
-}
-
-export function Shell({ children, batches, user }: { children: React.ReactNode; batches: BatchLite[]; user: ShellUser }) {
+export function Shell({ children, batches }: { children: React.ReactNode; batches: BatchLite[] }) {
   const pathname = usePathname();
   const router = useRouter();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -61,18 +54,6 @@ export function Shell({ children, batches, user }: { children: React.ReactNode; 
     }, 160);
     return () => clearTimeout(t);
   }, [q]);
-
-  const [signingOut, setSigningOut] = useState(false);
-  const signOut = async () => {
-    setSigningOut(true);
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-      router.replace("/login");
-      router.refresh();
-    } finally {
-      setSigningOut(false);
-    }
-  };
 
   const active = batches[0];
 
@@ -139,21 +120,11 @@ export function Shell({ children, batches, user }: { children: React.ReactNode; 
           <span className="hidden items-center gap-1.5 text-[11px] text-fog md:flex">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> burn-in T+168h complete
           </span>
-          <div className="flex h-7 w-7 items-center justify-center rounded-full border border-line2 bg-panel2 font-mono text-[10px] text-snow">
-            {initialsOf(user.name)}
-          </div>
+          <div className="flex h-7 w-7 items-center justify-center rounded-full border border-line2 bg-panel2 font-mono text-[10px] text-snow">RN</div>
           <div className="text-right leading-tight">
-            <div className="text-[11px] text-snow">{user.name}</div>
-            <div className="text-[9px] uppercase tracking-wider text-fog">{ROLE_LABELS[user.role]}</div>
+            <div className="text-[11px] text-snow">R. Nair</div>
+            <div className="text-[9px] uppercase tracking-wider text-fog">QA Lead</div>
           </div>
-          <button
-            onClick={signOut}
-            disabled={signingOut}
-            title={`Signed in as ${user.email}`}
-            className="rounded-md border border-line px-2 py-1 text-[10px] uppercase tracking-wider text-fog transition-colors hover:border-line2 hover:text-snow disabled:opacity-50"
-          >
-            {signingOut ? "..." : "Sign out"}
-          </button>
         </div>
       </header>
 

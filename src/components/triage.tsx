@@ -46,7 +46,7 @@ export default function Triage({ rows, events, initialMode, batchCode }: { rows:
   const submit = async (r: TriageRow, label: string) => {
     setSaving(r.aid);
     try {
-      await fetch("/api/feedback", { method: "POST", body: JSON.stringify({ componentCode: r.code, label }) });
+      await fetch("/api/feedback", { method: "POST", body: JSON.stringify({ componentCode: r.code, label, userName: "R. Nair" }) });
       setLabels((p) => ({ ...p, [r.aid]: label }));
     } finally { setSaving(null); }
   };
