@@ -21,11 +21,14 @@ export function CardHead({ title, sub, right }: { title: string; sub?: string; r
   );
 }
 
-export function Kpi({ label, value, sub, tone = "text-snow", spark }: {
-  label: string; value: ReactNode; sub?: ReactNode; tone?: string; spark?: ReactNode;
+export function Kpi({ label, value, sub, tone = "text-snow", spark, accent }: {
+  label: string; value: ReactNode; sub?: ReactNode; tone?: string; spark?: ReactNode; accent?: string;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-panel px-4 py-3">
+    <div
+      className="kpi-accent card-hover rounded-lg border border-line bg-panel px-4 py-3"
+      style={accent ? ({ ["--accent" as string]: accent } as React.CSSProperties) : undefined}
+    >
       <div className="flex items-center justify-between">
         <div className="text-[10px] uppercase tracking-[0.14em] text-fog">{label}</div>
         {spark}

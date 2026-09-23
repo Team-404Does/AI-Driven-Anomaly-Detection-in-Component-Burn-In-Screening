@@ -9,18 +9,34 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard, key: "G" },
-  { href: "/chamber", label: "Live Chamber", icon: Grid3X3, key: "C" },
-  { href: "/analytics", label: "Batch Analytics", icon: BarChart3, key: "B" },
-  { href: "/components", label: "Components", icon: Boxes, key: "M" },
-  { href: "/anomalies", label: "Anomalies", icon: AlertTriangle, key: "A" },
-  { href: "/lab", label: "Prediction Lab", icon: FlaskConical, key: "P" },
-  { href: "/root-cause", label: "Root Cause", icon: Activity, key: "R" },
-  { href: "/genealogy", label: "Genealogy", icon: GitBranch, key: "N" },
-  { href: "/reports", label: "Reports", icon: FileText, key: "T" },
-  { href: "/audit", label: "Audit & Models", icon: ClipboardList, key: "U" },
+const SECTIONS: { label: string; items: { href: string; label: string; icon: any; key: string }[] }[] = [
+  {
+    label: "Monitor",
+    items: [
+      { href: "/", label: "Overview", icon: LayoutDashboard, key: "G" },
+      { href: "/chamber", label: "Live Chamber", icon: Grid3X3, key: "C" },
+      { href: "/analytics", label: "Batch Analytics", icon: BarChart3, key: "B" },
+    ],
+  },
+  {
+    label: "Investigate",
+    items: [
+      { href: "/components", label: "Components", icon: Boxes, key: "M" },
+      { href: "/anomalies", label: "Anomalies", icon: AlertTriangle, key: "A" },
+      { href: "/lab", label: "Prediction Lab", icon: FlaskConical, key: "P" },
+      { href: "/root-cause", label: "Root Cause", icon: Activity, key: "R" },
+      { href: "/genealogy", label: "Genealogy", icon: GitBranch, key: "N" },
+    ],
+  },
+  {
+    label: "Operate",
+    items: [
+      { href: "/reports", label: "Reports", icon: FileText, key: "T" },
+      { href: "/audit", label: "Audit & Models", icon: ClipboardList, key: "U" },
+    ],
+  },
 ];
+const NAV = SECTIONS.flatMap((s) => s.items);
 
 interface BatchLite { id: number; batchCode: string; status: string; componentCount: number; }
 
@@ -62,12 +78,12 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
       {/* Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-40 flex w-[216px] flex-col border-r border-line bg-panel">
         <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md border border-line2 bg-panel2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md border border-sky-400/25 bg-sky-400/10">
             <Cpu size={16} className="text-sky-300" />
           </div>
           <div>
             <div className="font-mono text-[12px] font-semibold tracking-wider text-snow">CRIP · v0.9.3</div>
-            <div className="text-[10px] tracking-wide text-fog">Component Reliability Intelligence</div>
+            <div className="text-[9.5px] tracking-wide text-fog">Component Reliability Intelligence</div>
           </div>
         </div>
         <div className="px-3 pt-3">
@@ -78,23 +94,30 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
             <Search size={12} /> Search components <kbd className="ml-auto">/</kbd>
           </button>
         </div>
-        <nav className="mt-2 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
-          {NAV.map((n) => {
-            const isActive = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
-            return (
-              <Link
-                key={n.href} href={n.href}
-                className={cn(
-                  "group flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12px] transition-all",
-                  isActive ? "border border-line2 bg-panel2 text-snow" : "border border-transparent text-fog hover:bg-panel2 hover:text-snow",
-                )}
-              >
-                <n.icon size={14} className={isActive ? "text-sky-300" : "text-fog group-hover:text-snow"} />
-                <span className="flex-1">{n.label}</span>
-                <kbd className="opacity-0 transition-opacity group-hover:opacity-100">{n.key}</kbd>
-              </Link>
-            );
-          })}
+        <nav className="mt-1 flex-1 space-y-0.5 overflow-y-auto px-2 py-1">
+          {SECTIONS.map((section) => (
+            <div key={section.label}>
+              <div className="px-2.5 pb-1 pt-3 text-[9px] font-medium uppercase tracking-[0.18em] text-fog/70">{section.label}</div>
+              {section.items.map((n) => {
+                const isActive = n.href === "/" ? pathname === "/" : pathname.startsWith(n.href);
+                return (
+                  <Link
+                    key={n.href} href={n.href}
+                    className={cn(
+                      "group flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[12px] transition-all",
+                      isActive
+                        ? "border border-line2/80 bg-gradient-to-r from-sky-400/[0.09] to-transparent font-medium text-snow"
+                        : "border border-transparent text-fog hover:bg-panel2 hover:text-snow",
+                    )}
+                  >
+                    <n.icon size={14} className={isActive ? "text-sky-300" : "text-fog group-hover:text-snow"} />
+                    <span className="flex-1">{n.label}</span>
+                    <kbd className="opacity-0 transition-opacity group-hover:opacity-100">{n.key}</kbd>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
         <div className="border-t border-line p-3">
           <div className="flex items-center gap-2 text-[10px] text-fog">

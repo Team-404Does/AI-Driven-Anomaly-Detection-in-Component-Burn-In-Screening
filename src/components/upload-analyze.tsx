@@ -39,13 +39,13 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
     <div className="flex items-center gap-2">
       <button
         onClick={() => run("analyze")} disabled={!!busy}
-        className="flex items-center gap-1.5 rounded-md border border-line2 bg-panel2 px-3 py-1.5 text-[11.5px] text-snow transition-colors hover:border-sky-400/40 disabled:opacity-50"
+        className="btn btn-ghost"
       >
         <RefreshCw size={12} className={busy === "analyze" ? "animate-spin" : ""} /> Re-run analysis
       </button>
       <button
         onClick={() => setOpen(true)} disabled={!!busy}
-        className="flex items-center gap-1.5 rounded-md border border-sky-400/30 bg-sky-400/10 px-3 py-1.5 text-[11.5px] text-sky-200 transition-colors hover:bg-sky-400/15 disabled:opacity-50"
+        className="btn btn-primary"
       >
         <UploadCloud size={12} /> Upload CSV
       </button>
