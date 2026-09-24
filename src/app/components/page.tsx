@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card, CardHead, PageHead, StatusPill, DecisionPill, Mono, Meter, Empty } from "@/components/ui";
-import { getActiveBatch, getComponents } from "@/lib/queries";
+import { getActiveBatch, getComponents, getLotOptions } from "@/lib/queries";
+import HistoryExplorer from "@/components/history-explorer";
 import { cn, fmt } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, Search } from "lucide-react";
 
@@ -22,6 +23,8 @@ export default async function ComponentsPage({ searchParams }: { searchParams: P
     [...p.keys()].forEach((k) => !p.get(k) && p.delete(k));
     return `/components?${p.toString()}`;
   };
+
+  const lots = await getLotOptions();
 
   return (
     <div className="fade-in space-y-3">
@@ -90,6 +93,8 @@ export default async function ComponentsPage({ searchParams }: { searchParams: P
           </div>
         </div>
       </Card>
+
+      <HistoryExplorer lots={lots} />
     </div>
   );
 }

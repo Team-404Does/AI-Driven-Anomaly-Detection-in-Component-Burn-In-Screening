@@ -13,13 +13,21 @@
 }
 
 * { box-sizing: border-box; }
-html { color-scheme: dark; }
+html { color-scheme: dark; scroll-behavior: smooth; }
 body {
-  background: var(--color-ink);
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgb(56 189 248 / 0.05), transparent 60%),
+    radial-gradient(900px 420px at -10% 110%, rgb(192 132 252 / 0.04), transparent 55%),
+    var(--color-ink);
   color: var(--color-snow);
   font-feature-settings: "ss01", "cv11", "tnum";
 }
 ::selection { background: #1e3a5f; }
+:focus-visible { outline: 2px solid rgb(56 189 248 / 0.55); outline-offset: 2px; border-radius: 4px; }
+input, select, textarea { transition: border-color 0.16s ease, box-shadow 0.16s ease; }
+input:focus, select:focus { box-shadow: 0 0 0 3px rgb(56 189 248 / 0.08); }
+table { border-collapse: collapse; }
+th { letter-spacing: 0.08em; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }

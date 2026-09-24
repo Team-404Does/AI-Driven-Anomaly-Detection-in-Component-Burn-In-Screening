@@ -7,6 +7,7 @@ import { cn, fmt, dt } from "@/lib/utils";
 import { Card, CardHead, StatusPill, DecisionPill, Meter, Tag } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
 import Replay from "@/components/replay";
+import AIRecommendation from "@/components/ai-recommendation";
 import {
   FileText, ShieldCheck, Wrench, AlertTriangle, CheckCircle2, XCircle,
   GitCommitHorizontal, FlaskConical, Printer,
@@ -136,7 +137,7 @@ export default function PassportClient(props: any) {
               ["Health score", `${comp.health ?? "—"}/100`, "text-snow"],
               ["Anomaly score", fmt(comp.as), (comp.as ?? 0) >= 0.6 ? "text-red-300" : "text-emerald-300"],
               ["Drift risk", comp.driftRisk ?? "—", comp.driftRisk === "HIGH" ? "text-red-300" : comp.driftRisk === "MEDIUM" ? "text-amber-300" : "text-emerald-300"],
-              ["168h forecast", pred ? `${fmt(pred.pv)} µA` : "—", (pred?.hi ?? 0) > 4.5 ? "text-red-300" : "text-snow"],
+              ["168h forecast →336h", pred ? `${fmt(pred.pv)} µA` : "—", (pred?.hi ?? 0) > 4.5 ? "text-red-300" : "text-snow"],
             ].map(([k, v, t]) => (
               <div key={k as string} className="rounded-md border border-line bg-panel2 p-3">
                 <div className="text-[9px] uppercase tracking-[0.14em] text-fog">{k}</div>
@@ -153,6 +154,19 @@ export default function PassportClient(props: any) {
           </div>
         </div>
       </Card>
+
+      {/* AI recommendation — deterministic synthesis of Module A + Module B */}
+      <AIRecommendation
+        input={{
+          decision: comp.decision, anomalyScore: comp.as, anomalyHour: comp.feature?.anomalyHour,
+          staticResult: comp.staticResult, dynamicResult: comp.dynamicResult, hidden: comp.hidden,
+          driftRisk: comp.driftRisk, driftSlope: comp.driftSlope,
+          predValue: pred?.pv ?? null, predUpper: pred?.hi ?? null, forecastConf: pred?.conf ?? null,
+          equipCorrelated: !!anomaly?.explanation?.equipmentCorrelation,
+          lotCorrelated: !!anomaly?.explanation?.lotCorrelation,
+          riskScore: risk?.score ?? comp.riskScore, healthScore: comp.health,
+        }}
+      />
 
       {/* tabs */}
       <div className="flex flex-wrap gap-1">
@@ -267,6 +281,17 @@ export default function PassportClient(props: any) {
               {[["Predicted @336h", `${fmt(pred.pv)} µA`], ["95% interval", `${fmt(pred.lo)} – ${fmt(pred.hi)} µA`], ["Rate of change", `${fmt(pred.slope, 4)} µA/24h`], ["Est. time-to-limit", pred.ttl ? `~${Math.round(pred.ttl)}h` : "> horizon"], ["Drift risk", comp.driftRisk], ["Confidence", `${Math.round((pred.conf ?? 0) * 100)}%`]].map(([k, v]) => (
                 <div key={k as string} className="flex justify-between border-b border-line/60 pb-1.5 text-[11.5px]"><span className="text-fog">{k}</span><span className="font-mono text-snow">{v}</span></div>
               ))}
+              <div className="rounded-lg border border-purple-400/25 bg-purple-400/[0.06] p-3">
+                <div className="text-[9px] uppercase tracking-[0.14em] text-fog">Predicted current — 168h beyond test (336h)</div>
+                <div className="tabular mt-1 font-mono text-[24px] font-semibold text-purple-200">{fmt(pred.pv)} µA</div>
+                <div className="mt-2 flex items-center justify-between text-[10px]">
+                  <span className="text-fog">Confidence: <b className={cn("font-mono", (pred.conf ?? 0) >= 0.75 ? "text-emerald-300" : (pred.conf ?? 0) >= 0.55 ? "text-amber-300" : "text-red-300")}>{(pred.conf ?? 0) >= 0.75 ? "HIGH" : (pred.conf ?? 0) >= 0.55 ? "MEDIUM" : "LOW"}</b></span>
+                  <span className="tabular font-mono text-snow">{Math.round((pred.conf ?? 0) * 100)}%</span>
+                </div>
+                <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-[#141b26]">
+                  <div className={cn("h-full rounded-full transition-all duration-700", (pred.conf ?? 0) >= 0.75 ? "bg-emerald-400" : (pred.conf ?? 0) >= 0.55 ? "bg-amber-400" : "bg-red-400")} style={{ width: `${Math.round((pred.conf ?? 0) * 100)}%` }} />
+                </div>
+              </div>
               <div className="rounded border border-amber-400/25 bg-amber-400/10 p-2 text-[10px] leading-relaxed text-amber-200/90">
                 Projection beyond the 168h test window is a model-derived estimate — not a guaranteed mission-year claim. Only physically validated parameters are extrapolated.
               </div>

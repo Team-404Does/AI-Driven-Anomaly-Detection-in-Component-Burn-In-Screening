@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn("rounded-lg border border-line bg-panel shadow-[0_1px_0_rgba(255,255,255,0.02)_inset]", className)}>
+    <div className={cn("rounded-lg border border-line bg-gradient-to-b from-panel to-[#0a0e13] shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_8px_24px_-18px_rgb(0_0_0/0.8)]", className)}>
       {children}
     </div>
   );

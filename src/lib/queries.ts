@@ -139,6 +139,45 @@ export async function getFeedbackAll(batchId: number) {
     .where(eq(components.batchId, batchId)).orderBy(desc(feedback.createdAt)).limit(30);
 }
 
+export interface HistoryRow { date: string; batch: string; result: string; health: number | null; score: number | null; units?: number }
+const DECISION_RANK = ["REJECT", "REVIEW", "WATCH", "MANUAL QC", "EQUIP HOLD", "PASS-EARLY", "PASS"];
+
+// Cross-batch test history: previous burn-in campaigns for one part code or one lot.
+export async function getTestHistory(opts: { part?: string; lot?: string; days?: number }): Promise<HistoryRow[]> {
+  const days = Math.min(365, Math.max(1, opts.days ?? 90));
+  const cutoff = new Date(Date.now() - days * 86400_000);
+  const conds: SQL[] = [sql`${batches.createdAt} >= ${cutoff}`];
+  if (opts.part) conds.push(eq(components.componentCode, opts.part));
+  if (opts.lot) conds.push(eq(components.lotId, opts.lot));
+  const rows = await db.select({
+    date: batches.createdAt, batch: batches.batchCode,
+    decision: components.decision, health: components.healthScore, score: components.anomalyScore,
+  }).from(components).innerJoin(batches, eq(components.batchId, batches.id))
+    .where(and(...conds)).orderBy(desc(batches.createdAt)).limit(500);
+
+  if (opts.part) {
+    return rows.map((r) => ({ date: (r.date ?? new Date()).toISOString(), batch: r.batch, result: r.decision ?? "MANUAL QC", health: r.health, score: r.score }));
+  }
+  // lot view: one row per campaign — worst decision, mean health
+  const byBatch = new Map<string, { date: string; batch: string; worst: string; hSum: number; hN: number; score: number | null; units: number }>();
+  for (const r of rows) {
+    const b = byBatch.get(r.batch) ?? { date: (r.date ?? new Date()).toISOString(), batch: r.batch, worst: "PASS", hSum: 0, hN: 0, score: null, units: 0 };
+    const rank = DECISION_RANK.indexOf((r.decision ?? "PASS").toUpperCase());
+    const worstRank = DECISION_RANK.indexOf(b.worst);
+    if (rank !== -1 && (worstRank === -1 || rank < worstRank)) b.worst = (r.decision ?? "PASS").toUpperCase();
+    if (r.health != null) { b.hSum += r.health; b.hN++; }
+    if (b.score == null && r.score != null && r.score > 0.3) b.score = r.score;
+    b.units++;
+    byBatch.set(r.batch, b);
+  }
+  return [...byBatch.values()].map((b) => ({ date: b.date, batch: b.batch, result: b.worst, health: b.hN ? Math.round(b.hSum / b.hN) : null, score: b.score, units: b.units }));
+}
+
+export async function getLotOptions() {
+  const rows = await db.selectDistinct({ lot: components.lotId }).from(components).orderBy(asc(components.lotId)).limit(40);
+  return rows.map((r) => r.lot);
+}
+
 export async function searchComponentCodes(q: string) {
   return db.select({ code: components.componentCode, status: components.status, lot: components.lotId, socket: components.socketId })
     .from(components).where(ilike(components.componentCode, `%${q}%`)).orderBy(asc(components.componentCode)).limit(12);
