@@ -185,8 +185,10 @@ export async function searchComponentCodes(q: string) {
 
 export async function batchKbMarginals(batchId: number) {
   // per-hour population stats for telemetry corridor (median, p05, p95), computed over normalized units is
-  // approximated by raw stats here for rendering corridors
-  return db.select({
+  // approximated by raw stats here for rendering corridors.
+  // Prefer the tagged normal cohort (seeded demo); fall back to the whole batch when no
+  // scenario tags exist (uploaded datasets) so the corridor never renders empty.
+  const base = {
     hour: telemetry.hour,
     med: sql<number>`percentile_cont(0.5) within group (order by ${telemetry.leakageUa})`,
     p16: sql<number>`percentile_cont(0.16) within group (order by ${telemetry.leakageUa})`,
@@ -194,7 +196,12 @@ export async function batchKbMarginals(batchId: number) {
     p003: sql<number>`percentile_cont(0.0015) within group (order by ${telemetry.leakageUa})`,
     p998: sql<number>`percentile_cont(0.9985) within group (order by ${telemetry.leakageUa})`,
     medTemp: sql<number>`percentile_cont(0.5) within group (order by ${telemetry.chamberTempC})`,
-  }).from(telemetry).innerJoin(components, eq(telemetry.componentId, components.id))
-    .where(and(eq(components.batchId, batchId), eq(components.scenarioTag, "normal")))
+  };
+  const q = db.select(base).from(telemetry).innerJoin(components, eq(telemetry.componentId, components.id));
+  const tagged = await q.where(and(eq(components.batchId, batchId), eq(components.scenarioTag, "normal")))
     .groupBy(telemetry.hour).orderBy(asc(telemetry.hour));
+  if (tagged.length > 0) return tagged;
+  const all = await q.where(eq(components.batchId, batchId))
+    .groupBy(telemetry.hour).orderBy(asc(telemetry.hour));
+  return all;
 }

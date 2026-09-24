@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn, fmt, dt } from "@/lib/utils";
-import { Card, CardHead, StatusPill, DecisionPill, Meter, Tag } from "@/components/ui";
+import { Card, CardHead, StatusPill, DecisionPill, Meter, Tag, ChartLegend, ChartNote } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
 import Replay from "@/components/replay";
 import AIRecommendation from "@/components/ai-recommendation";
@@ -37,12 +37,15 @@ export default function PassportClient(props: any) {
   const vals = tel.map((t: any) => t[param]).filter((x: any) => x != null);
   const limit = param === "l" ? 5 : null;
 
-  const telOpt = useMemo(() => ({
+  const telOpt = useMemo(() => {
+    // snap the onset marker to the nearest sampled hour (categories are the 4h sample grid)
+    const onsetCat = anomaly ? String(Math.round(anomaly.hour / 4) * 4) : null;
+    return {
     grid: { left: 48, right: 14, top: 30, bottom: 40 },
-    tooltip: { ...TOOLTIP, trigger: "axis" },
+    tooltip: { ...TOOLTIP, trigger: "axis", formatter: (ps: any[]) => ps.filter((p: any) => p.seriesName && !p.seriesName.startsWith("_") && p.value != null).map((p: any) => `${p.marker}${p.seriesName}: <b>${(+p.value).toFixed(3)} ${pUnit}</b>${p.axisValue != null ? ` @ T+${p.axisValue}h` : ""}`).join("<br/>") },
     legend: { textStyle: { color: "#8b95a5", fontSize: 10 }, top: 2 },
-    xAxis: { type: "category", data: tel.map((t: any) => t.h), ...AXIS, name: "hour" },
-    yAxis: { type: "value", ...AXIS, name: pUnit, scale: true },
+    xAxis: { type: "category", data: tel.map((t: any) => t.h), ...AXIS, name: "burn-in hour →", nameLocation: "middle" as const, nameGap: 24 },
+    yAxis: { type: "value", ...AXIS, name: `${pLabel} →`, nameTextStyle: { color: "#8b95a5", align: "left" }, scale: true },
     dataZoom: [{ type: "inside" }, { type: "slider", height: 14, bottom: 8, borderColor: "#243042", backgroundColor: "#0b0f14", fillerColor: "rgba(56,189,248,0.12)", textStyle: { color: "#8b95a5", fontSize: 9 } }],
     series: [
       param === "l" && {
@@ -50,7 +53,7 @@ export default function PassportClient(props: any) {
         lineStyle: { color: "#38bdf8", width: 1, type: "dashed" },
       },
       param === "l" && {
-        name: "P16–P84 corridor", type: "line", showSymbol: false, data: corridor.map((c: any) => c.p16),
+        name: "Normal corridor P16–P84", type: "line", showSymbol: false, data: corridor.map((c: any) => c.p16),
         lineStyle: { width: 0 }, stack: "corr", areaStyle: { color: "rgba(56,189,248,0.05)" },
       },
       param === "l" && {
@@ -58,30 +61,41 @@ export default function PassportClient(props: any) {
         lineStyle: { width: 0 }, stack: "corr", areaStyle: { color: "rgba(56,189,248,0.10)" },
       },
       {
-        name: "Observed", type: "line", showSymbol: false, data: tel.map((t: any) => t[param] != null ? +(t[param]).toFixed(3) : null),
+        name: "This unit (observed)", type: "line", showSymbol: false, data: tel.map((t: any) => t[param] != null ? +(t[param]).toFixed(3) : null),
         connectNulls: false, lineStyle: { color: "#e2e8f0", width: 1.6 },
+        markArea: onsetCat ? {
+          silent: true, itemStyle: { color: "rgba(251,146,60,0.07)" },
+          label: { color: "#fb923c", fontSize: 9, position: "insideTop" as const },
+          data: [[{ xAxis: onsetCat, name: "dynamic-flag window →" }, { xAxis: String(tel[tel.length - 1]?.h ?? 168) }]],
+        } : undefined,
         markLine: {
           silent: true, symbol: "none",
           data: [
             ...(limit ? [{ yAxis: limit, lineStyle: { color: "#f87171", type: "dashed" as const }, label: { color: "#f87171", formatter: "STATIC LIMIT 5.0", fontSize: 9, position: "insideEndTop" as const } }] : []),
-            ...(anomaly ? [{ xAxis: String(anomaly.hour), lineStyle: { color: "#fb923c" }, label: { color: "#fb923c", formatter: `onset T+${anomaly.hour}h`, fontSize: 9 } }] : []),
+            ...(onsetCat ? [{ xAxis: onsetCat, lineStyle: { color: "#fb923c" }, label: { color: "#fb923c", formatter: `onset T+${anomaly.hour}h`, fontSize: 9 } }] : []),
           ],
         },
       },
     ].filter(Boolean),
-  }), [tel, corridor, param, anomaly, limit, pUnit]);
+  }; }, [tel, corridor, param, anomaly, limit, pLabel]);
 
   const fcOpt = useMemo(() => pred ? ({
-    grid: { left: 48, right: 14, top: 30, bottom: 26 },
-    tooltip: { ...TOOLTIP, trigger: "axis" },
-    legend: { textStyle: { color: "#8b95a5", fontSize: 10 }, top: 2 },
-    xAxis: { type: "value", min: 0, max: 336, ...AXIS, name: "hour", nameLocation: "middle" as const, nameGap: 22 },
-    yAxis: { type: "value", ...AXIS, name: "µA (physics-normalized)", scale: true },
+    grid: { left: 48, right: 14, top: 30, bottom: 34 },
+    tooltip: { ...TOOLTIP, trigger: "axis", formatter: (ps: any[]) => {
+      const h = ps?.[0]?.value?.[0] ?? ps?.[0]?.axisValue ?? "";
+      const rows = ps.filter((p: any) => p.seriesName && !p.seriesName.startsWith("_") && p.value?.[1] != null)
+        .map((p: any) => `${p.marker}${p.seriesName}: <b>${(+p.value[1]).toFixed(3)} µA</b>`);
+      if (h !== "" && +h > 168) rows.push(`<span style="color:#8b95a5">extrapolated — beyond test window</span>`);
+      return `<b>T+${h}h</b><br/>${rows.join("<br/>")}`;
+    } },
+    legend: { data: ["Observed (0–168h test)", "Projected (model, →336h)", "95% prediction interval"], textStyle: { color: "#8b95a5", fontSize: 10 }, top: 2 },
+    xAxis: { type: "value", min: 0, max: 336, ...AXIS, name: "burn-in hour →", nameLocation: "middle" as const, nameGap: 26 },
+    yAxis: { type: "value", ...AXIS, name: "µA (physics-normalized) →", nameTextStyle: { color: "#8b95a5", align: "left" }, scale: true },
     series: [
-      { name: "Observed", type: "line", showSymbol: false, data: tel.filter((t: any) => t.l != null).map((t: any) => [t.h, +t.l.toFixed(3)]), lineStyle: { color: "#e2e8f0", width: 1.5 } },
-      { name: "PI lower", type: "line", showSymbol: false, data: pred.curve.map((c: any) => [c.hour, c.lo]), lineStyle: { width: 0 }, stack: "pi" },
-      { name: "95% interval", type: "line", showSymbol: false, data: pred.curve.map((c: any) => +(c.hi - c.lo).toFixed(3)), lineStyle: { width: 0 }, stack: "pi", areaStyle: { color: "rgba(192,132,252,0.14)" } },
-      { name: "Projected", type: "line", showSymbol: false, data: pred.curve.map((c: any) => [c.hour, c.pred]), lineStyle: { color: "#c084fc", width: 1.8, type: "dashed" } },
+      { name: "Observed (0–168h test)", type: "line", showSymbol: false, data: tel.filter((t: any) => t.l != null).map((t: any) => [t.h, +t.l.toFixed(3)]), lineStyle: { color: "#e2e8f0", width: 1.5 }, markArea: { silent: true, itemStyle: { color: "rgba(192,132,252,0.05)" }, label: { color: "#a78bfa", fontSize: 9, position: "insideTop" as const }, data: [[{ xAxis: 168, name: "extrapolated region (model only)" }, { xAxis: 336 }]] } },
+      { name: "_piLower", type: "line", showSymbol: false, data: pred.curve.map((c: any) => [c.hour, c.lo]), lineStyle: { width: 0 }, stack: "pi" },
+      { name: "95% prediction interval", type: "line", showSymbol: false, data: pred.curve.map((c: any) => +(c.hi - c.lo).toFixed(3)), lineStyle: { width: 0 }, stack: "pi", areaStyle: { color: "rgba(192,132,252,0.14)" } },
+      { name: "Projected (model, →336h)", type: "line", showSymbol: false, data: pred.curve.map((c: any) => [c.hour, c.pred]), lineStyle: { color: "#c084fc", width: 1.8, type: "dashed" }, markLine: { silent: true, symbol: "none", data: [{ yAxis: 5, lineStyle: { color: "#f87171", type: "dashed" as const }, label: { color: "#f87171", formatter: "STATIC LIMIT 5.0 µA", fontSize: 9, position: "insideEndTop" as const } }] } },
     ],
   }) : null, [pred, tel]);
 
@@ -262,6 +276,8 @@ export default function PassportClient(props: any) {
             }
           />
           <EChart option={telOpt} height={330} />
+          <ChartLegend items={[{ label: "this unit (observed)", color: "#e2e8f0", kind: "line" as const }, ...(param === "l" ? [{ label: "population median", color: "#38bdf8", kind: "dash" as const }, { label: "normal corridor P16–P84", color: "rgba(56,189,248,0.5)", kind: "band" as const }] : []), ...(limit ? [{ label: "static limit 5.0", color: "#f87171", kind: "dash" as const }] : []), ...(anomaly ? [{ label: "onset + flagged window", color: "#fb923c" }] : [])]} />
+          <ChartNote>White line is this component&apos;s raw measurement each 4h sample; {param === "l" ? "the blue band is where the middle 68% of healthy peers sit at that hour, and the dashed blue line is their median — the unit is judged against this moving corridor, not a fixed value. " : ""}{limit ? "The dashed red line is the classical datasheet limit — a unit can stay below it (static PASS) yet still be flagged for leaving the corridor. " : ""}{anomaly ? `The orange marker and shaded region mark the detected anomaly onset at T+${anomaly.hour}h.` : "No anomaly onset detected on this unit."} Drag the slider below to zoom into any window.</ChartNote>
           <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-line px-4 py-2 font-mono text-[10px] text-fog">
             <span>n={vals.length} valid samples</span><span>max {fmt(Math.max(...vals))} {pUnit}</span><span>min {fmt(Math.min(...vals))} {pUnit}</span>
             <span className="text-amber-300">scroll/pinch chart to zoom · slider below</span>
@@ -272,8 +288,10 @@ export default function PassportClient(props: any) {
       {tab === "Drift Forecast" && pred && (
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
           <Card className="xl:col-span-2">
-            <CardHead title="168h drift forecast — leakage (physics-normalized)" sub="DRIFT-LIN v2.1 · least-squares + prediction interval · model-derived estimate" />
+            <CardHead title="168h drift forecast — leakage (physics-normalized)" sub="observed 0–168h · model projection 168–336h · dashed red = static limit" />
             <EChart option={fcOpt} height={320} />
+            <ChartLegend items={[{ label: "observed (test window)", color: "#e2e8f0", kind: "line" }, { label: "projected (DRIFT-LIN model)", color: "#c084fc", kind: "dash" }, { label: "95% prediction interval", color: "rgba(192,132,252,0.35)", kind: "band" }, { label: "static limit 5.0 µA", color: "#f87171", kind: "dash" }, { label: "shaded = extrapolated (no data)", color: "rgba(192,132,252,0.08)", kind: "band" }]} />
+            <ChartNote tone="purple">Solid white is what actually happened during the 168h burn-in; the dashed purple is the model&apos;s least-squares projection a further 168h into mission life. The shaded band is the honest uncertainty — it widens with horizon, which is why the confidence indicator below discounts far extrapolations. If the projection crosses the red limit inside the horizon, the unit is drifting toward eventual failure even if it passed today.</ChartNote>
           </Card>
           <Card>
             <CardHead title="Forecast readout" />

@@ -80,6 +80,50 @@ export function Empty({ msg }: { msg: string }) {
   return <div className="flex h-28 items-center justify-center text-[12px] text-fog">{msg}</div>;
 }
 
+// ---- Chart explainability helpers ----
+
+export type LegendItem =
+  | { label: string; color: string; kind?: "swatch" }
+  | { label: string; color: string; kind: "line" | "dash" | "band" }
+  | { label: string; kind: "muted" };
+
+/** Compact legend under a chart: swatch = filled marker, line/dash = stroke sample, band = translucent area. */
+export function ChartLegend({ items, className }: { items: LegendItem[]; className?: string }) {
+  return (
+    <div className={cn("flex flex-wrap gap-x-4 gap-y-1 border-t border-line px-4 py-2", className)}>
+      {items.map((it) => (
+        <span key={it.label} className="flex items-center gap-1.5 text-[10px] text-fog">
+          {it.kind === "muted" ? null : it.kind === "line" ? (
+            <span className="h-0 w-4" style={{ borderTop: `2px solid ${it.color}` }} />
+          ) : it.kind === "dash" ? (
+            <span className="h-0 w-4" style={{ borderTop: `2px dashed ${it.color}` }} />
+          ) : it.kind === "band" ? (
+            <span className="h-2.5 w-4 rounded-[2px]" style={{ background: it.color, opacity: 0.4 }} />
+          ) : (
+            <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ background: it.color }} />
+          )}
+          {it.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** "How to read this" explainer box shown beneath charts. */
+export function ChartNote({ children, tone = "sky" }: { children: ReactNode; tone?: "sky" | "amber" | "purple" }) {
+  const tones = {
+    sky: "border-sky-400/20 bg-sky-400/[0.05] text-sky-100/80",
+    amber: "border-amber-400/20 bg-amber-400/[0.05] text-amber-100/80",
+    purple: "border-purple-400/20 bg-purple-400/[0.05] text-purple-100/80",
+  };
+  return (
+    <div className={cn("mx-4 mb-3 rounded-md border p-2.5 text-[10.5px] leading-relaxed", tones[tone])}>
+      <span className="font-medium uppercase tracking-wider opacity-70">How to read · </span>
+      {children}
+    </div>
+  );
+}
+
 export function PageHead({ title, sub, right }: { title: string; sub?: string; right?: ReactNode }) {
   return (
     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">

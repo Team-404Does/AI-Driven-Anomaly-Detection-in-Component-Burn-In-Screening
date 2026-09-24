@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardHead, PageHead } from "@/components/ui";
+import { Card, CardHead, PageHead, ChartLegend, ChartNote } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
 import { getActiveBatch, getGenealogy } from "@/lib/queries";
 import { cn } from "@/lib/utils";
@@ -17,11 +17,11 @@ export default async function GenealogyPage({ searchParams }: { searchParams: Pr
   const mfrs = [...new Map(tree.map((l: any) => [l.mfr, { mfr: l.mfr, lots: tree.filter((x: any) => x.mfr === l.mfr) }])).values()] as any[];
 
   const rateOpt = {
-    grid: { left: 90, right: 30, top: 10, bottom: 24 },
+    grid: { left: 90, right: 30, top: 10, bottom: 28 },
     // descriptor → client-side formatter (functions can't cross the RSC boundary)
     tooltip: { ...TOOLTIP, formatter: { __fn: { use: "formatter", desc: { kind: "percent" } } } },
-    xAxis: { type: "value", ...AXIS, name: "%", nameLocation: "middle" as const, nameGap: 20 },
-    yAxis: { type: "category", data: tree.map((l: any) => l.lot), ...AXIS },
+    xAxis: { type: "value", ...AXIS, name: "% of lot flagged →", nameLocation: "middle" as const, nameGap: 24 },
+    yAxis: { type: "category", data: tree.map((l: any) => l.lot), ...AXIS, name: "lot", nameGap: 44, nameLocation: "middle" as const },
     series: [{
       type: "bar", barWidth: 12,
       data: tree.map((l: any) => ({ value: +((l.flagged / l.count) * 100).toFixed(2), itemStyle: { color: l.lot === selLot ? "#fbbf24" : "#38bdf877" } })),
@@ -81,8 +81,10 @@ export default async function GenealogyPage({ searchParams }: { searchParams: Pr
 
         <div className="space-y-3">
           <Card>
-            <CardHead title="Flag rate by lot" />
+            <CardHead title="Flag rate by lot" sub="share of each lot's units the engine flagged" />
             <EChart option={rateOpt} height={190} />
+            <ChartLegend items={[{ label: "selected lot", color: "#fbbf24" }, { label: "other lots", color: "#38bdf877" }]} />
+            <ChartNote>Longer bar = larger share of that lot was flagged. A lot standing far right of its siblings is a process-shift suspect — click it in the lineage graph to drill into wafer-level propagation.</ChartNote>
           </Card>
           <Card>
             <CardHead title={`${selLot ?? "Lot"} risk propagation`} sub="wafer-level drill-down" />

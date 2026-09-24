@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardHead, PageHead, Empty } from "@/components/ui";
+import { Card, CardHead, PageHead, Empty, ChartNote } from "@/components/ui";
 import EChart, { TOOLTIP } from "@/components/echart";
 import { getActiveBatch, getEquipmentEvents } from "@/lib/queries";
 import { db } from "@/db";
@@ -20,7 +20,7 @@ export default async function RootCausePage() {
   const bySig = new Map<string, number>();
   sigs.forEach(({ s }) => bySig.set(s.signature, (bySig.get(s.signature) ?? 0) + 1));
   const pieOpt = {
-    tooltip: { ...TOOLTIP },
+    tooltip: { ...TOOLTIP, formatter: { __fn: { use: "formatter", desc: { kind: "sigPie" } } } },
     series: [{
       type: "pie", radius: ["52%", "78%"],
       label: { color: "#8b95a5", fontSize: 10, formatter: "{b}\n{c}" },
@@ -39,8 +39,13 @@ export default async function RootCausePage() {
       />
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
         <Card>
-          <CardHead title="Signature distribution" sub={`${sigs.length} attributed components`} />
-          {sigs.length ? <EChart option={pieOpt} height={270} /> : <Empty msg="No signatures attributed." />}
+          <CardHead title="Signature distribution" sub={`how often each candidate mechanism appears across ${sigs.length} attributed components`} />
+          {sigs.length ? (
+            <>
+              <EChart option={pieOpt} height={270} />
+              <ChartNote tone="amber">Slice size = number of components whose telemetry best matches that mechanism&apos;s fingerprint. These are pattern-matched hypotheses ranked by evidence — the table below shows who and why; physical confirmation requires failure analysis.</ChartNote>
+            </>
+          ) : <Empty msg="No signatures attributed." />}
         </Card>
 
         <Card className="xl:col-span-2">

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardHead, Kpi, Mono, PageHead, DecisionPill, Empty, Meter } from "@/components/ui";
+import { Card, CardHead, Kpi, Mono, PageHead, DecisionPill, Empty, Meter, ChartLegend, ChartNote } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
 import { getActiveBatch, getAnomalyQueue, getAudit, getEquipmentEvents } from "@/lib/queries";
 import { dt, fmt, cn } from "@/lib/utils";
@@ -20,17 +20,20 @@ export default async function Overview() {
 
   const hours = (stats.hourMean ?? []).map((h: any) => h.hour);
   const healthOpt = {
-    grid: { left: 42, right: 10, top: 26, bottom: 22 },
-    tooltip: { ...TOOLTIP, trigger: "axis" },
-    xAxis: { type: "category", data: hours, ...AXIS, name: "h" },
-    yAxis: { type: "value", ...AXIS, name: "µA", nameTextStyle: { color: "#8b95a5" } },
+    grid: { left: 42, right: 10, top: 30, bottom: 24 },
+    tooltip: { ...TOOLTIP, trigger: "axis", formatter: { __fn: { use: "formatter", desc: { kind: "healthTrend" } } } },
+    xAxis: { type: "category", data: hours, ...AXIS, name: "burn-in hour →", nameLocation: "middle" as const, nameGap: 22, boundaryGap: false },
+    yAxis: [
+      { type: "value", ...AXIS, name: "leakage µA →", nameTextStyle: { color: "#38bdf8", align: "left" }, splitLine: { show: true, lineStyle: { color: "rgba(36,48,66,0.4)", type: "dashed" as const } } },
+      { type: "value", ...AXIS, name: "onsets →", nameTextStyle: { color: "#f87171", align: "right" }, splitLine: { show: false } },
+    ],
     series: [
       { name: "Batch mean (physics-norm)", type: "line", data: (stats.hourMean ?? []).map((h: any) => h.mean), smooth: true, showSymbol: false, lineStyle: { color: "#38bdf8", width: 1.6 }, areaStyle: { color: "rgba(56,189,248,0.07)" } },
-      { name: "Onsets", type: "bar", data: (stats.onsetHist ?? []).map((o: any) => o.count), yAxisIndex: 0, itemStyle: { color: "rgba(248,113,113,0.5)" }, barWidth: 4 },
+      { name: "Onsets", type: "bar", data: (stats.onsetHist ?? []).map((o: any) => o.count), yAxisIndex: 1, itemStyle: { color: "rgba(248,113,113,0.5)" }, barWidth: 4 },
     ],
   };
   const donut = {
-    tooltip: { ...TOOLTIP },
+    tooltip: { ...TOOLTIP, formatter: { __fn: { use: "formatter", desc: { kind: "donutRisk" } } } },
     series: [{
       type: "pie", radius: ["56%", "80%"], center: ["50%", "50%"],
       label: { show: false },
@@ -88,6 +91,8 @@ export default async function Overview() {
         <Card className="card-hover xl:col-span-2">
           <CardHead title="Batch health trend — physics-normalized leakage" sub="population mean µA at 125°C reference · red bars = anomaly onsets" />
           <EChart option={healthOpt} height={230} />
+          <ChartLegend items={[{ label: "batch mean leakage — left axis (µA, physics-normalized to 125°C)", color: "#38bdf8", kind: "line" }, { label: "new anomaly onsets — right axis (count)", color: "rgba(248,113,113,0.5)" }]} />
+          <ChartNote>Two axes: <span className="text-sky-300">left = leakage in µA</span> (blue line, physics-normalized to 125°C), <span className="text-red-300">right = count of new anomaly onsets</span> (red bars). A bar at hour H means new units first crossed their anomaly threshold around that hour — clusters of bars point at a common event (equipment or process), scattered bars at isolated weak units. Hover for exact values.</ChartNote>
         </Card>
         <Card className="card-hover flex flex-col">
           <CardHead title="Risk distribution" sub="deterministic risk engine output" />
@@ -100,7 +105,7 @@ export default async function Overview() {
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 border-t border-line px-4 py-2.5">
             {legend.map(([name, color, v]) => (
-              <div key={name} className="flex items-center gap-1.5 text-[10.5px]">
+              <div key={name} className="flex items-center gap-1.5 text-[10.5px]" title={name === "Healthy" ? "risk ≤ 30" : name === "Early-qualified" ? "PASS_EARLY candidates" : name === "Watch" ? "risk 31–60" : name === "Review" ? "risk 61–80" : name === "Critical" ? "risk > 80" : "insufficient data"}>
                 <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: color }} />
                 <span className="truncate text-fog">{name}</span>
                 <span className="tabular ml-auto font-mono text-snow">{fmt(v, 0)}</span>
@@ -108,6 +113,7 @@ export default async function Overview() {
               </div>
             ))}
           </div>
+          <ChartNote tone="purple">Segments are the deterministic risk engine&apos;s five verdict bands — hover a slice for its exact range. Green-to-red ordering mirrors the risk scale (30 / 60 / 80 boundaries), so the donut doubles as the batch&apos;s disposition forecast.</ChartNote>
         </Card>
       </div>
 

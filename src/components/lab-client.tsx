@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cn, fmt } from "@/lib/utils";
-import { Card, CardHead, StatusPill, DecisionPill, Meter } from "@/components/ui";
+import { Card, CardHead, StatusPill, DecisionPill, Meter, ChartLegend, ChartNote } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
 import { FlaskConical, Play, Thermometer, Zap, Timer, Loader2 } from "lucide-react";
 
@@ -28,16 +28,22 @@ export default function LabClient({ candidates }: { candidates: any[] }) {
   const opt = useMemo(() => {
     if (!data?.tel) return null;
     return {
-      grid: { left: 48, right: 14, top: 28, bottom: 26 },
-      tooltip: { ...TOOLTIP, trigger: "axis" },
-      xAxis: { type: "value", min: 0, max: 336, ...AXIS, name: "hour", nameLocation: "middle" as const, nameGap: 22 },
-      yAxis: { type: "value", ...AXIS, name: "µA", scale: true },
+      grid: { left: 48, right: 14, top: 28, bottom: 34 },
+      tooltip: { ...TOOLTIP, trigger: "axis", formatter: (ps: any[]) => {
+        const h = ps?.[0]?.value?.[0] ?? ps?.[0]?.axisValue ?? "";
+        const rows = ps.filter((p: any) => p.seriesName && !p.seriesName.startsWith("_") && p.value?.[1] != null)
+          .map((p: any) => `${p.marker}${p.seriesName}: <b>${(+p.value[1]).toFixed(3)} µA</b>`);
+        if (h !== "" && +h > 168) rows.push(`<span style="color:#8b95a5">extrapolated — model only</span>`);
+        return `<b>T+${h}h</b><br/>${rows.join("<br/>")}`;
+      } },
+      xAxis: { type: "value", min: 0, max: 336, ...AXIS, name: "burn-in hour →", nameLocation: "middle" as const, nameGap: 26 },
+      yAxis: { type: "value", ...AXIS, name: "µA (physics-normalized) →", nameTextStyle: { color: "#8b95a5", align: "left" }, scale: true },
       series: [
-        { name: "observed", type: "line", showSymbol: false, data: data.tel.filter((t: any) => t.l != null).map((t: any) => [t.h, +t.l.toFixed(3)]), lineStyle: { color: "#e2e8f0", width: 1.5 } },
+        { name: "observed", type: "line", showSymbol: false, data: data.tel.filter((t: any) => t.l != null).map((t: any) => [t.h, +t.l.toFixed(3)]), lineStyle: { color: "#e2e8f0", width: 1.5 }, markArea: { silent: true, itemStyle: { color: "rgba(192,132,252,0.05)" }, label: { color: "#a78bfa", fontSize: 9, position: "insideTop" as const }, data: [[{ xAxis: 168, name: "extrapolated (model only)" }, { xAxis: 336 }]] } },
         ...(data.pred ? [
-          { name: "PI-lo", type: "line", showSymbol: false, data: data.pred.curve.map((c: any) => [c.hour, c.lo]), lineStyle: { width: 0 }, stack: "pi" },
-          { name: "95% PI", type: "line", showSymbol: false, data: data.pred.curve.map((c: any) => [c.hour, +(c.hi - c.lo).toFixed(3)]), lineStyle: { width: 0 }, stack: "pi", areaStyle: { color: "rgba(192,132,252,0.13)" } },
-          { name: "projected", type: "line", showSymbol: false, data: data.pred.curve.map((c: any) => [c.hour, c.pred]), lineStyle: { color: "#c084fc", width: 1.7, type: "dashed" } },
+          { name: "_piLo", type: "line", showSymbol: false, data: data.pred.curve.map((c: any) => [c.hour, c.lo]), lineStyle: { width: 0 }, stack: "pi" },
+          { name: "95% prediction interval", type: "line", showSymbol: false, data: data.pred.curve.map((c: any) => [c.hour, +(c.hi - c.lo).toFixed(3)]), lineStyle: { width: 0 }, stack: "pi", areaStyle: { color: "rgba(192,132,252,0.13)" } },
+          { name: "projected (model)", type: "line", showSymbol: false, data: data.pred.curve.map((c: any) => [c.hour, c.pred]), lineStyle: { color: "#c084fc", width: 1.7, type: "dashed" }, markLine: { silent: true, symbol: "none", data: [{ yAxis: 5, lineStyle: { color: "#f87171", type: "dashed" as const }, label: { color: "#f87171", formatter: "STATIC LIMIT 5.0 µA", fontSize: 9, position: "insideEndTop" as const } }] } },
         ] : []),
       ],
     };
@@ -63,6 +69,8 @@ export default function LabClient({ candidates }: { candidates: any[] }) {
             }
           />
           {opt ? <EChart option={opt} height={300} /> : <div className="flex h-[300px] items-center justify-center text-fog"><Loader2 size={16} className="animate-spin" /></div>}
+          <ChartLegend items={[{ label: "observed (0–168h test)", color: "#e2e8f0", kind: "line" }, { label: "projected (DRIFT-LIN model, →336h)", color: "#c084fc", kind: "dash" }, { label: "95% prediction interval", color: "rgba(192,132,252,0.35)", kind: "band" }, { label: "static limit 5.0 µA", color: "#f87171", kind: "dash" }]} />
+          <ChartNote tone="purple">White line: the unit&apos;s measured behaviour during the real 168h burn-in. Dashed purple: where the model projects it a further 168h into mission life — the widening band is honest uncertainty, and the dashed red limit is where a projection crossing means eventual failure. Use the What-If panel to stress this same unit at harsher conditions.</ChartNote>
           {data?.comp && (
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-line px-4 py-2 text-[11px]">
               <StatusPill status={data.comp.status} /><DecisionPill decision={data.comp.decision} />
