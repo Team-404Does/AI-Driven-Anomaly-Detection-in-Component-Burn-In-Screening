@@ -452,7 +452,6 @@ rack
 chamber_row
 chamber_col
 ```
-
 ### Minimal example
 
 ```csv
