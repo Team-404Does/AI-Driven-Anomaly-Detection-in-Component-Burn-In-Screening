@@ -25,12 +25,33 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
     const timer = setInterval(() => { if (i < steps.length) { setProgress((p) => [...p, steps[i++]]); } }, 420);
     let failed = false;
     try {
+      const sendCsv = async (file: File) => {
+        const buf = await file.arrayBuffer();
+        if (typeof CompressionStream !== "undefined") {
+          const cs = new CompressionStream("gzip");
+          new Blob([buf]).stream().pipeThrough(cs);
+          const gz = await new Response(cs.readable).arrayBuffer();
+          // Vercel caps request bodies at ~4.5 MB — raw CSVs over that 413 before
+          // our code runs, so compress and let the API gunzip
+          if (gz.byteLength >= buf.byteLength) return { body: buf, gz: false };
+          return { body: gz, gz: true };
+        }
+        return { body: buf, gz: false };
+      };
+      const { body, gz } = kind === "upload" ? await sendCsv(file!) : { body: undefined, gz: false };
       const res = kind === "analyze"
         ? await fetch("/api/analyze", { method: "POST", body: JSON.stringify({ batchId }) })
-        : await fetch("/api/upload", { method: "POST", body: await file!.text() });
+        : await fetch("/api/upload", {
+            method: "POST",
+            body: body as ArrayBuffer,
+            headers: gz ? { "Content-Encoding": "gzip", "Content-Type": "text/csv" } : { "Content-Type": "text/csv" },
+          });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || j.error) {
-        setError(j.error || `Upload failed (HTTP ${res.status}) — nothing was saved. Try a smaller CSV or re-run the analysis.`);
+        const msg = res.status === 413
+          ? "File too large for the hosting platform's request limit — even compressed. Split the CSV (e.g. by lot or hour range) or remove optional columns and try again."
+          : j.error || `Upload failed (HTTP ${res.status}) — nothing was saved. Try a smaller CSV or re-run the analysis.`;
+        setError(msg);
         failed = true;
         return;
       }

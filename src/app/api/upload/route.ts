@@ -1,5 +1,8 @@
 // Burn-in CSV upload → validation (data-quality report) → persist → full analysis pipeline.
+// Accepts gzip-encoded bodies (Content-Encoding: gzip) — the client compresses
+// large CSVs to stay under Vercel's ~4.5 MB request-body limit.
 import { NextResponse } from "next/server";
+import { gunzipSync } from "node:zlib";
 import { db } from "@/db";
 import { auditLog, batches, components, telemetry } from "@/db/schema";
 import { runPipeline } from "@/lib/ml/pipeline";
@@ -28,9 +31,20 @@ function splitCsv(line: string, delim: string): string[] {
 const unquote = (s: string) => s.trim().replace(/^\"|\"$/g, "");
 
 export async function POST(req: Request) {
-  const raw = await req.text();
+  let raw: string;
+  const ab = await req.arrayBuffer();
+  if ((req.headers.get("content-encoding") ?? "").includes("gzip")) {
+    try {
+      raw = gunzipSync(Buffer.from(ab)).toString("utf8");
+    } catch {
+      // some layers auto-decompress despite the header — treat bytes as plain text
+      raw = Buffer.from(ab).toString("utf8");
+    }
+  } else {
+    raw = Buffer.from(ab).toString("utf8");
+  }
   if (!raw || raw.length < 50) return NextResponse.json({ error: "empty file" }, { status: 400 });
-  if (raw.length > 40_000_000) return NextResponse.json({ error: "file too large (40MB max)" }, { status: 413 });
+  if (raw.length > 40_000_000) return NextResponse.json({ error: "file too large (40MB max after decompression)" }, { status: 413 });
   if (raw.slice(0, 2) === "PK")
     return NextResponse.json({ error: "This is an .xlsx workbook, not CSV — export it as CSV (File → Save As → CSV UTF-8) and upload again." }, { status: 400 });
 
