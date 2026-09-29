@@ -46,18 +46,14 @@ export async function POST(req: Request) {
   const delim = counts[0][1] > 0 ? counts[0][0] : ",";
 
   // header may not be line 1 (title/preamble rows are common in exports) —
-  // find the first line in the top 15 that contains all required columns
+  // find the first line in the top 15 that contains all required columns;
+  // if none matches, use line 1 as the header and try schema auto-mapping
   let headerIdx = -1, header: string[] = [];
   for (let i = 0; i < Math.min(15, lines.length); i++) {
     const cells = splitCsv(lines[i], delim).map((c) => unquote(c).toLowerCase());
     if (REQUIRED.every((c) => cells.includes(c))) { headerIdx = i; header = cells; break; }
   }
-  if (headerIdx < 0) {
-    const found = splitCsv(lines[0], delim).map(unquote).slice(0, 12).join(", ");
-    return NextResponse.json({
-      error: `Could not find the required columns (${REQUIRED.join(", ")}) in the first rows. Detected delimiter "${delim === "\t" ? "TAB" : delim}". First header line reads: [${found}]. Use a comma-separated CSV with those exact headers.`,
-    }, { status: 400 });
-  }
+  if (headerIdx < 0) { headerIdx = 0; header = splitCsv(lines[0], delim).map((c) => unquote(c).toLowerCase()); }
   const H = (n: string) => header.indexOf(n);
   const num = (v: string | undefined): number | null => {
     if (v == null || v.trim() === "" || v.toLowerCase() === "nan") return null;
@@ -67,15 +63,71 @@ export async function POST(req: Request) {
     return Number.isFinite(n) ? n : null;
   };
 
+  // ---- flexible schema mapping: common synonyms for the required fields ----
+  const norm = (s: string) => s.replace(/[^a-z0-9]/g, "");
+  const SYN: Record<string, string[]> = {
+    component_code: ["componentcode", "component", "unitid", "unit", "deviceid", "device", "serialno", "serial", "partid", "part", "chipid", "dieid", "code", "id"],
+    hour: ["hourselapsed", "hours", "timeindex", "timeh", "elapsed", "elapsedh", "t", "time", "step", "cycle", "sample"],
+    leakage_ua: ["leakageua", "leakage", "leakagecurrent", "leakua", "leak", "currentua", "currentma", "current", "ileak", "supplycurrent", "idlecurrent", "power"],
+  };
+  const resolve = (req: string): number => {
+    if (header.includes(req)) return header.indexOf(req);
+    for (const syn of SYN[req]) { const i = header.findIndex((c) => norm(c) === syn); if (i >= 0) return i; }
+    for (const syn of SYN[req]) { if (syn.length > 3) { const i = header.findIndex((c) => c.includes(syn)); if (i >= 0) return i; } }
+    return -1;
+  };
+  const cIdx = resolve("component_code");
+  const hIdx = resolve("hour");
+  let lIdx = resolve("leakage_ua");
+  const tsIdx = header.findIndex((c) => /timestamp|datetime|^date|^time$/.test(c));
+  const mapping: string[] = [];
+  if (cIdx < 0) mapping.push("no component column — entire file treated as one virtual unit CHAMBER-LOG");
+  if (hIdx < 0 && tsIdx >= 0) mapping.push(`hours derived from "${header[tsIdx]}"`);
+
+  // no leakage column → pick the most measurement-like numeric column
+  const META = /timestamp|datetime|^date|^time$|elapsed|index|^id$|code|component|unit|device|serial|lot|wafer|manufact|channel|rack|row|col|comment|note|label|name|status|type/;
+  if (lIdx < 0) {
+    const sampleRows = lines.slice(headerIdx + 1, headerIdx + 21).map((l) => splitCsv(l, delim).map(unquote));
+    const n = Math.max(1, sampleRows.length);
+    let best = -1, bestScore = -1;
+    for (let j = 0; j < header.length; j++) {
+      if (META.test(header[j]) || j === tsIdx) continue;
+      const vals = sampleRows.map((r) => num(r[j])).filter((v: number | null): v is number => v != null);
+      if (vals.length / n < 0.8 || vals.length < 3) continue;
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length);
+      const cv = Math.abs(mean) > 1e-9 ? sd / Math.abs(mean) : 0;
+      let score = Math.min(3, cv);
+      if (/leak|current|_ua|ua$|amp/i.test(header[j])) score += 3;
+      if (/voltage|volt|temp|humid|pressure|power|freq/i.test(header[j])) score += 2;
+      if (score > bestScore) { bestScore = score; best = j; }
+    }
+    if (best < 0)
+      return NextResponse.json({
+        error: `No numeric measurement column found. Columns seen: [${header.join(", ")}]. Provide at least one numeric series (e.g. leakage_ua).`,
+      }, { status: 400 });
+    lIdx = best;
+    mapping.push(`no leakage_ua — using "${header[lIdx]}" as the measured parameter`);
+  }
+
+  let t0: number | null = null;
+  const tsHours = (v: string | undefined): number | null => {
+    if (v == null) return null;
+    const t = Date.parse(v);
+    if (!Number.isFinite(t)) return null;
+    if (t0 == null) t0 = t;
+    return +((t - t0) / 3.6e6).toFixed(2);
+  };
+
   let missing = 0, dupes = 0, tsIssues = 0, impossible = 0;
   const rows: any[] = [];
   const seen = new Set<string>();
   const compMeta = new Map<string, any>();
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const c = splitCsv(lines[i], delim).map(unquote);
-    const code = unquote(c[H("component_code")] ?? "");
-    const hour = num(c[H("hour")]);
-    const leak = num(c[H("leakage_ua")]);
+    const code = (cIdx >= 0 ? c[cIdx]?.trim() : "") || "CHAMBER-LOG";
+    const hour = hIdx >= 0 ? num(c[hIdx]) : tsIdx >= 0 ? tsHours(c[tsIdx]) : null;
+    const leak = num(c[lIdx]);
     if (!code || hour == null) { missing++; continue; }
     if (leak == null) missing++;
     if (leak != null && (leak < 0 || leak > 1000)) impossible++;
@@ -150,7 +202,7 @@ export async function POST(req: Request) {
       userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
       detail: { components: codes.length, rows: rows.length, qualityScore: quality.score },
     });
-    return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, ...result });
+    return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, schemaMapping: mapping.length ? mapping : null, ...result });
   } catch (e: any) {
     console.error("[upload] analysis failed", e);
     // never let the API die with an opaque 500 — the modal surfaces this text

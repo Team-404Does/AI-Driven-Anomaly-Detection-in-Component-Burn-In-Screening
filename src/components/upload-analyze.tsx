@@ -10,6 +10,7 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   const [progress, setProgress] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [quality, setQuality] = useState<any>(null);
+  const [schemaMap, setSchemaMap] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -19,7 +20,7 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   ];
 
   const run = async (kind: "analyze" | "upload", file?: File) => {
-    setBusy(kind); setProgress([]); setQuality(null); setError(null);
+    setBusy(kind); setProgress([]); setQuality(null); setSchemaMap(null); setError(null);
     let i = 0;
     const timer = setInterval(() => { if (i < steps.length) { setProgress((p) => [...p, steps[i++]]); } }, 420);
     let failed = false;
@@ -34,6 +35,7 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
         return;
       }
       if (j.quality) setQuality(j.quality);
+      if (j.schemaMapping) setSchemaMap(j.schemaMapping);
     } catch (e: any) {
       setError(e?.message || "Network error during upload.");
       failed = true;
@@ -104,6 +106,11 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
               {error && !busy && (
                 <div className="mt-3 rounded-md border border-red-400/30 bg-red-400/10 p-3 font-mono text-[11px] text-red-200">
                   {error}
+                </div>
+              )}
+              {schemaMap && !busy && (
+                <div className="mt-3 rounded-md border border-sky-400/25 bg-sky-400/10 p-3 font-mono text-[11px] text-sky-200">
+                  SCHEMA AUTO-MAP — {schemaMap.join(" · ")}
                 </div>
               )}
               {quality && !busy && (
