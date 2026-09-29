@@ -10,6 +10,7 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   const [progress, setProgress] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [quality, setQuality] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const steps = [
@@ -18,20 +19,34 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   ];
 
   const run = async (kind: "analyze" | "upload", file?: File) => {
-    setBusy(kind); setProgress([]); setQuality(null);
+    setBusy(kind); setProgress([]); setQuality(null); setError(null);
     let i = 0;
     const timer = setInterval(() => { if (i < steps.length) { setProgress((p) => [...p, steps[i++]]); } }, 420);
+    let failed = false;
     try {
       const res = kind === "analyze"
         ? await fetch("/api/analyze", { method: "POST", body: JSON.stringify({ batchId }) })
         : await fetch("/api/upload", { method: "POST", body: await file!.text() });
-      const j = await res.json();
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.error) {
+        setError(j.error || `Upload failed (HTTP ${res.status}) — nothing was saved. Try a smaller CSV or re-run the analysis.`);
+        failed = true;
+        return;
+      }
       if (j.quality) setQuality(j.quality);
-      router.refresh();
+    } catch (e: any) {
+      setError(e?.message || "Network error during upload.");
+      failed = true;
+      return;
     } finally {
       clearInterval(timer);
       setProgress(steps);
-      setTimeout(() => { setBusy(null); setOpen(false); router.refresh(); }, 900);
+      // on failure keep the modal open so the error is actually seen —
+      // silently closing looked like "the upload did nothing"
+      setTimeout(() => {
+        setBusy(null);
+        if (!failed) { setOpen(false); router.refresh(); }
+      }, failed ? 200 : 900);
     }
   };
 
@@ -85,6 +100,11 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
                   <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) run("upload", f); }} />
                 </>
+              )}
+              {error && !busy && (
+                <div className="mt-3 rounded-md border border-red-400/30 bg-red-400/10 p-3 font-mono text-[11px] text-red-200">
+                  {error}
+                </div>
               )}
               {quality && !busy && (
                 <div className="mt-3 rounded-md border border-emerald-400/25 bg-emerald-400/10 p-3 font-mono text-[11px] text-emerald-200">

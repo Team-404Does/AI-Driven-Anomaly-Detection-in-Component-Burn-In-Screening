@@ -7,7 +7,7 @@ import {
   anomalies, batches, components, equipmentEvents, failureSignatures,
   modelRegistry, predictions, riskAssessments, telemetry, auditLog,
 } from "@/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { HOURS, STATIC_LEAK_LIMIT } from "@/lib/sim/generator";
 import { isolationForest } from "@/lib/ml/isoforest";
 import {
@@ -66,9 +66,13 @@ export async function runPipeline(batchId: number) {
   byComp.forEach((arr) => arr.sort((a, b) => a.hour - b.hour));
 
   // ---- features ----
+  // horizon = max hour actually present in telemetry, so shorter uploads
+  // (e.g. 24h bench logs) are analyzed on their own horizon instead of
+  // every unit failing the 168h coverage gate and the pipeline crashing
+  const maxHourTel = telRows.reduce((m, r) => Math.max(m, r.telemetry.hour), 0);
   const feats: SeriesFeat[] = comps.map((c) => {
     const pts = byComp.get(c.id) ?? [];
-    const f = seriesFeatures(c.id, pts, 168);
+    const f = seriesFeatures(c.id, pts, Math.max(24, maxHourTel));
     return f;
   });
   populationZ(feats, HOURS);
@@ -82,7 +86,7 @@ export async function runPipeline(batchId: number) {
     return values.map((r) => r.map((v, j) => (v - meds[j]) / mads[j]));
   };
   const physVals = hasTel.map((f) => [f.zLast ?? 0, f.maxAbsZ ?? 0, f.slopePer24h, f.accel, f.rollStd, f.vthDrift, f.maxStepZ]);
-  const XA = zmat(physVals);
+  const XA = hasTel.length ? zmat(physVals) : [];
   // challenger: same estimators but on raw (un-normalized) series
   const rawVals = hasTel.map((f) => {
     const xs = f.rawSeries.map((p) => p.hour), ys = f.rawSeries.map((p) => p.v);
@@ -94,9 +98,10 @@ export async function runPipeline(batchId: number) {
     const rstd = Math.sqrt(resids.reduce((a, r) => a + r * r, 0) / resids.length);
     return [last, 0, fit.b * 24, a2 * 24, rstd, f.vthDrift, f.maxStepZ];
   });
-  const XB = zmat(rawVals);
-  const isoA = isolationForest(XA, 120, 256, 26170);
-  const isoB = isolationForest(XB, 120, 256, 26170);
+  const XB = hasTel.length ? zmat(rawVals) : [];
+  // empty batch (no unit with ≥10 samples) must degrade to all-MANUAL QC, not crash
+  const isoA = XA.length ? isolationForest(XA, 120, 256, 26170) : { scores: [] as number[], ms: 0 };
+  const isoB = XB.length ? isolationForest(XB, 120, 256, 26170) : { scores: [] as number[], ms: 0 };
 
   // calibration → [0,1]-ish scores
   const vths = hasTel.map((f) => f.vthDrift);
@@ -353,7 +358,26 @@ export async function runPipeline(batchId: number) {
   await ins(anomalies, anRows); await ins(predictions, predRows);
   await ins(failureSignatures, sigRows); await ins(riskAssessments, riskRows);
   if (events.length) await ins(equipmentEvents, events);
-  for (const u of compUpdates) await db.update(components).set(u.patch).where(eq(components.id, u.id));
+  // batched component updates — one round-trip per 200 rows instead of one per
+  // component (a per-row loop over hosted Postgres takes minutes, blowing the
+  // serverless time budget; a VALUES join takes seconds)
+  for (let i = 0; i < compUpdates.length; i += 200) {
+    const chunk = compUpdates.slice(i, i + 200);
+    await db.execute(sql`
+      UPDATE components AS c SET
+        status = v.status, decision = v.decision, risk_level = v.risk_level,
+        risk_score = v.risk_score, health_score = v.health_score,
+        anomaly_score = v.anomaly_score, drift_risk = v.drift_risk,
+        drift_slope = v.drift_slope, static_result = v.static_result,
+        dynamic_result = v.dynamic_result, hidden_anomaly = v.hidden_anomaly,
+        feature_json = v.feature_json
+      FROM (VALUES ${sql.join(chunk.map((u: any) => {
+        const p = u.patch;
+        return sql`(${u.id}::int, ${p.status ?? null}::text, ${p.decision ?? null}::text, ${p.riskLevel ?? null}::text, ${p.riskScore ?? null}::float8, ${p.healthScore ?? null}::int, ${p.anomalyScore ?? null}::float8, ${p.driftRisk ?? null}::text, ${p.driftSlope ?? null}::float8, ${p.staticResult ?? null}::text, ${p.dynamicResult ?? null}::text, ${p.hiddenAnomaly ?? false}::boolean, ${p.featureJson ? JSON.stringify(p.featureJson) : null}::jsonb)`;
+      }), sql`, `)})
+      AS v(id, status, decision, risk_level, risk_score, health_score, anomaly_score, drift_risk, drift_slope, static_result, dynamic_result, hidden_anomaly, feature_json)
+      WHERE c.id = v.id`);
+  }
 
   // ---- batch stats for dashboards ----
   const scored = comps.map((c) => ({ c, u: compUpdates.find((x) => x.id === c.id)?.patch })).filter((x) => x.u);

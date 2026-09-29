@@ -76,31 +76,44 @@ export async function POST(req: Request) {
     status: "validated", componentCount: codes.length, dataQuality: quality,
   }).returning();
 
+  // component_code is GLOBALLY unique, so uploaded codes are namespaced per
+  // batch — otherwise re-uploading any CSV (or two teams uploading similar
+  // files) collides on the unique index and the request 500s.
+  const codePrefix = `U${batch.id}-`;
+
   const compIds: Record<string, number> = {};
   const CH = 200;
   for (let i = 0; i < codes.length; i += CH) {
     const vals = codes.slice(i, i + CH).map((code) => {
       const m = compMeta.get(code);
       return {
-        componentCode: code, batchId: batch.id, lotId: m.lot, waferId: m.wafer, manufacturer: m.mfr,
+        componentCode: `${codePrefix}${code}`, batchId: batch.id, lotId: m.lot, waferId: m.wafer, manufacturer: m.mfr,
         rack: Math.min(7, m.rack), chamberRow: Math.min(7, m.row), chamberCol: Math.min(15, m.col),
         socketId: `R${Math.min(7, m.rack) + 1}-${"ABCDEFGH"[Math.min(7, m.row)]}${String(Math.min(15, m.col) + 1).padStart(2, "0")}`,
         channelId: m.channel, scenarioTag: "uploaded",
       };
     });
     const ret = await db.insert(components).values(vals).returning({ id: components.id, code: components.componentCode });
-    ret.forEach((r) => (compIds[r.code] = r.id));
+    ret.forEach((r) => (compIds[r.code.slice(codePrefix.length)] = r.id));
   }
-  for (let i = 0; i < rows.length; i += 2500) {
-    await db.insert(telemetry).values(rows.slice(i, i + 2500).map((r) => ({
-      componentId: compIds[r.code], hour: r.hour, leakageUa: r.leak, vthMv: r.vth,
-      rdsMohm: r.rds, chamberTempC: r.temp, vdsStressV: r.vds, channelId: r.channel,
-    })));
+  try {
+    for (let i = 0; i < rows.length; i += 2500) {
+      await db.insert(telemetry).values(rows.slice(i, i + 2500).map((r) => ({
+        componentId: compIds[r.code], hour: r.hour, leakageUa: r.leak, vthMv: r.vth,
+        rdsMohm: r.rds, chamberTempC: r.temp, vdsStressV: r.vds, channelId: r.channel,
+      })));
+    }
+    const result = await runPipeline(batch.id);
+    await db.insert(auditLog).values({
+      userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
+      detail: { components: codes.length, rows: rows.length, qualityScore: quality.score },
+    });
+    return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, ...result });
+  } catch (e: any) {
+    console.error("[upload] analysis failed", e);
+    // never let the API die with an opaque 500 — the modal surfaces this text
+    return NextResponse.json(
+      { error: e?.message ? `Analysis failed: ${e.message}` : "Analysis failed — batch saved, re-run analysis from the dashboard." },
+      { status: 500 });
   }
-  const result = await runPipeline(batch.id);
-  await db.insert(auditLog).values({
-    userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
-    detail: { components: codes.length, rows: rows.length, qualityScore: quality.score },
-  });
-  return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, ...result });
 }
