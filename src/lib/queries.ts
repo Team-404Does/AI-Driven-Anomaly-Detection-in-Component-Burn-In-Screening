@@ -17,7 +17,9 @@ export async function getActiveBatch(bParam?: string) {
     const hit = all.find((b) => b.batchCode === bParam || String(b.id) === bParam);
     if (hit) return hit;
   }
-  return all[0];
+  // newest ANALYZED batch first — a roster upload with no analysis should not
+  // blank out the whole cockpit for the operator
+  return all.find((b) => b.status === "analyzed") ?? all[0];
 }
 
 export async function getChamber(batchId: number, rack: number) {
