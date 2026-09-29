@@ -9,19 +9,61 @@ export const maxDuration = 180;
 
 const REQUIRED = ["component_code", "hour", "leakage_ua"];
 
-export async function POST(req: Request) {
-  const text = await req.text();
-  if (!text || text.length < 50) return NextResponse.json({ error: "empty file" }, { status: 400 });
-  if (text.length > 40_000_000) return NextResponse.json({ error: "file too large (40MB max)" }, { status: 413 });
+// RFC-4180-ish split: honors double-quoted cells (escaped "" inside)
+function splitCsv(line: string, delim: string): string[] {
+  const out: string[] = []; let cur = ""; let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === "\"") { if (line[i + 1] === "\"") { cur += "\""; i++; } else inQ = false; }
+      else cur += ch;
+    } else if (ch === "\"") inQ = true;
+    else if (ch === delim) { out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
 
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  const header = lines[0].toLowerCase().split(",").map((h) => h.trim());
-  const missingCols = REQUIRED.filter((c) => !header.includes(c));
-  if (missingCols.length) return NextResponse.json({ error: `missing required columns: ${missingCols.join(", ")}` }, { status: 400 });
+const unquote = (s: string) => s.trim().replace(/^\"|\"$/g, "");
+
+export async function POST(req: Request) {
+  const raw = await req.text();
+  if (!raw || raw.length < 50) return NextResponse.json({ error: "empty file" }, { status: 400 });
+  if (raw.length > 40_000_000) return NextResponse.json({ error: "file too large (40MB max)" }, { status: 413 });
+  if (raw.slice(0, 2) === "PK")
+    return NextResponse.json({ error: "This is an .xlsx workbook, not CSV — export it as CSV (File → Save As → CSV UTF-8) and upload again." }, { status: 400 });
+
+  // tolerate a UTF-8 BOM (Excel "CSV UTF-8" exports)
+  const text = raw.replace(/^\uFEFF/, "");
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+
+  // sniff delimiter: comma, semicolon or tab — whichever the sample uses most
+  const sample = lines.slice(0, 20).join("\n");
+  const counts: [string, number][] = [",", ";", "\t"].map((d) =>
+    [d, sample.split(d).length - 1] as [string, number]);
+  counts.sort((a, b) => b[1] - a[1]);
+  const delim = counts[0][1] > 0 ? counts[0][0] : ",";
+
+  // header may not be line 1 (title/preamble rows are common in exports) —
+  // find the first line in the top 15 that contains all required columns
+  let headerIdx = -1, header: string[] = [];
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
+    const cells = splitCsv(lines[i], delim).map((c) => unquote(c).toLowerCase());
+    if (REQUIRED.every((c) => cells.includes(c))) { headerIdx = i; header = cells; break; }
+  }
+  if (headerIdx < 0) {
+    const found = splitCsv(lines[0], delim).map(unquote).slice(0, 12).join(", ");
+    return NextResponse.json({
+      error: `Could not find the required columns (${REQUIRED.join(", ")}) in the first rows. Detected delimiter "${delim === "\t" ? "TAB" : delim}". First header line reads: [${found}]. Use a comma-separated CSV with those exact headers.`,
+    }, { status: 400 });
+  }
   const H = (n: string) => header.indexOf(n);
   const num = (v: string | undefined): number | null => {
     if (v == null || v.trim() === "" || v.toLowerCase() === "nan") return null;
-    const n = Number(v);
+    let s = v.trim();
+    if (/^-?\d+,\d+$/.test(s)) s = s.replace(",", "."); // European decimal comma
+    const n = Number(s);
     return Number.isFinite(n) ? n : null;
   };
 
@@ -29,9 +71,9 @@ export async function POST(req: Request) {
   const rows: any[] = [];
   const seen = new Set<string>();
   const compMeta = new Map<string, any>();
-  for (let i = 1; i < lines.length; i++) {
-    const c = lines[i].split(",");
-    const code = c[H("component_code")]?.trim();
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const c = splitCsv(lines[i], delim).map(unquote);
+    const code = unquote(c[H("component_code")] ?? "");
     const hour = num(c[H("hour")]);
     const leak = num(c[H("leakage_ua")]);
     if (!code || hour == null) { missing++; continue; }
