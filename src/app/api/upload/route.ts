@@ -93,21 +93,32 @@ export async function POST(req: Request) {
   const cIdx = resolve("component_code");
   const hIdx = resolve("hour");
   let lIdx = resolve("leakage_ua");
-  const tsIdx = header.findIndex((c) => /timestamp|datetime|^date|^time$/.test(c));
+  const tsIdx = header.findIndex((c) => /timestamp|datetime|^date$|^time$/.test(c));
   const mapping: string[] = [];
   if (cIdx < 0) mapping.push("no component column — entire file treated as one virtual unit CHAMBER-LOG");
   if (hIdx < 0 && tsIdx >= 0) mapping.push(`hours derived from "${header[tsIdx]}"`);
 
+  // ---- wide-format detection: hour-per-column layouts (leak_h0, leak_h4, …) ----
+  const sampleRows = lines.slice(headerIdx + 1, headerIdx + 21).map((l) => splitCsv(l, delim).map(unquote));
+  const nSample = Math.max(1, sampleRows.length);
+  const numericRatio = (j: number) =>
+    sampleRows.map((r) => num(r[j])).filter((v: number | null): v is number => v != null).length / nSample;
+  const WIDE_RE = /^(?:(?:leakage|leak|current|ileak|meas|value|h|hour|hr|t)[_\s-]*)?(\d{1,3})$/;
+  const wideCols = header
+    .map((c, j) => ({ c, j, m: WIDE_RE.exec(c) }))
+    .filter(({ c, j, m }) => m != null && +m![1]! <= 1000 && numericRatio(j) >= 0.8)
+    .map(({ j, m }) => ({ idx: j, hour: +m![1]! }));
+  const isWide = wideCols.length >= 4;
+
   // no leakage column → pick the most measurement-like numeric column
   const META = /timestamp|datetime|^date|^time$|elapsed|index|^id$|code|component|unit|device|serial|lot|wafer|manufact|channel|rack|row|col|comment|note|label|name|status|type/;
-  if (lIdx < 0) {
-    const sampleRows = lines.slice(headerIdx + 1, headerIdx + 21).map((l) => splitCsv(l, delim).map(unquote));
-    const n = Math.max(1, sampleRows.length);
+  if (lIdx < 0 && !isWide) {
     let best = -1, bestScore = -1;
     for (let j = 0; j < header.length; j++) {
       if (META.test(header[j]) || j === tsIdx) continue;
+      if (numericRatio(j) < 0.8) continue;
       const vals = sampleRows.map((r) => num(r[j])).filter((v: number | null): v is number => v != null);
-      if (vals.length / n < 0.8 || vals.length < 3) continue;
+      if (vals.length < 3) continue;
       const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
       const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length);
       const cv = Math.abs(mean) > 1e-9 ? sd / Math.abs(mean) : 0;
@@ -116,13 +127,13 @@ export async function POST(req: Request) {
       if (/voltage|volt|temp|humid|pressure|power|freq/i.test(header[j])) score += 2;
       if (score > bestScore) { bestScore = score; best = j; }
     }
-    if (best < 0)
-      return NextResponse.json({
-        error: `No numeric measurement column found. Columns seen: [${header.join(", ")}]. Provide at least one numeric series (e.g. leakage_ua).`,
-      }, { status: 400 });
-    lIdx = best;
-    mapping.push(`no leakage_ua — using "${header[lIdx]}" as the measured parameter`);
+    if (best >= 0) {
+      lIdx = best;
+      mapping.push(`no leakage_ua — using "${header[lIdx]}" as the measured parameter`);
+    }
   }
+  // roster/manifest file: component identities but no telemetry anywhere
+  const rosterMode = lIdx < 0 && !isWide && cIdx >= 0;
 
   let t0: number | null = null;
   const tsHours = (v: string | undefined): number | null => {
@@ -137,6 +148,48 @@ export async function POST(req: Request) {
   const rows: any[] = [];
   const seen = new Set<string>();
   const compMeta = new Map<string, any>();
+  const metaFrom = (c: string[]) => ({
+    lot: c[H("lot_id")]?.trim() || "LOT-UPLOAD", wafer: c[H("wafer_id")]?.trim() || "WFR-U00",
+    mfr: c[H("manufacturer")]?.trim() || "UNKNOWN",
+    rack: num(c[H("rack")]) ?? compMeta.size >> 7,
+    row: num(c[H("chamber_row")]) ?? (compMeta.size % 128) >> 4,
+    col: num(c[H("chamber_col")]) ?? compMeta.size % 16,
+    channel: c[H("channel_id")]?.trim() || `CH-0${(compMeta.size % 8) + 1}`,
+    maxHour: 0 as number,
+  });
+  if (isWide) {
+    // wide layout: one row per unit, one column per hour → unpivot to long
+    mapping.push(`wide layout — ${wideCols.length} time columns unpivoted (${header[wideCols[0].idx]} … ${header[wideCols[wideCols.length - 1].idx]})`);
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      const c = splitCsv(lines[i], delim).map(unquote);
+      const code = (cIdx >= 0 ? c[cIdx]?.trim() : "") || "CHAMBER-LOG";
+      if (!code) continue;
+      if (!compMeta.has(code)) compMeta.set(code, metaFrom(c));
+      for (const wc of wideCols) {
+        const leak = num(c[wc.idx]);
+        if (leak == null) { missing++; continue; }
+        if (leak < 0 || leak > 1000) impossible++;
+        const key = `${code}@${wc.hour}`;
+        if (seen.has(key)) { dupes++; continue; }
+        seen.add(key);
+        rows.push({
+          code, hour: wc.hour, leak,
+          vth: num(c[H("vth_mv")]), rds: num(c[H("rds_mohm")]) ?? 118,
+          temp: num(c[H("chamber_temp_c")]) ?? 125, vds: num(c[H("vds_stress_v")]) ?? 28,
+          channel: c[H("channel_id")]?.trim() || compMeta.get(code)!.channel,
+        });
+      }
+    }
+  } else if (rosterMode) {
+    // roster/manifest: register the units so traceability exists; nothing to analyze yet
+    mapping.push("no telemetry series found — units registered as a roster (upload a telemetry log to analyze)");
+    for (let i = headerIdx + 1; i < lines.length; i++) {
+      const c = splitCsv(lines[i], delim).map(unquote);
+      const code = cIdx >= 0 ? c[cIdx]?.trim() : "";
+      if (!code || compMeta.has(code)) continue;
+      compMeta.set(code, metaFrom(c));
+    }
+  } else {
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const c = splitCsv(lines[i], delim).map(unquote);
     const code = (cIdx >= 0 ? c[cIdx]?.trim() : "") || "CHAMBER-LOG";
@@ -166,22 +219,26 @@ export async function POST(req: Request) {
       channel: c[H("channel_id")]?.trim() || compMeta.get(code).channel,
     });
   }
-  if (!rows.length) return NextResponse.json({ error: "no valid telemetry rows parsed" }, { status: 400 });
+  }
+  if (!rows.length && !compMeta.size)
+    return NextResponse.json({ error: "no valid rows parsed — check the file has a header and at least one data row" }, { status: 400 });
   const total = rows.length + missing;
   const quality = {
-    score: +(100 - (missing / total) * 100 * 1.4 - (dupes / total) * 300 - (impossible / total) * 400).toFixed(1),
-    missingPct: +((missing / total) * 100).toFixed(2),
-    duplicatePct: +((dupes / total) * 100).toFixed(2),
-    unknownUnitsPct: 0, timestampIssuePct: +((tsIssues / total) * 100).toFixed(2),
+    score: +(100 - (missing / Math.max(1, total)) * 100 * 1.4 - (dupes / Math.max(1, total)) * 300 - (impossible / Math.max(1, total)) * 400).toFixed(1),
+    missingPct: +((missing / Math.max(1, total)) * 100).toFixed(2),
+    duplicatePct: +((dupes / Math.max(1, total)) * 100).toFixed(2),
+    unknownUnitsPct: 0, timestampIssuePct: +((tsIssues / Math.max(1, total)) * 100).toFixed(2),
     impossibleValues: impossible, totalRows: rows.length, components: compMeta.size,
-    note: "Duplicates dropped; missing samples flagged, not imputed.",
+    note: rosterMode
+      ? "Roster upload — units registered; no telemetry series found in this file."
+      : "Duplicates dropped; missing samples flagged, not imputed.",
   };
 
   const codes = [...compMeta.keys()];
   const batchCode = `BN-UP-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(Math.floor(Math.random() * 900) + 100)}`;
   const [batch] = await db.insert(batches).values({
     batchCode, manufacturer: "upload", sourceFile: "user-upload.csv",
-    status: "validated", componentCount: codes.length, dataQuality: quality,
+    status: rosterMode ? "roster" : "validated", componentCount: codes.length, dataQuality: quality,
   }).returning();
 
   // component_code is GLOBALLY unique, so uploaded codes are namespaced per
@@ -210,6 +267,13 @@ export async function POST(req: Request) {
         componentId: compIds[r.code], hour: r.hour, leakageUa: r.leak, vthMv: r.vth,
         rdsMohm: r.rds, chamberTempC: r.temp, vdsStressV: r.vds, channelId: r.channel,
       })));
+    }
+    if (rosterMode) {
+      await db.insert(auditLog).values({
+        userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
+        detail: { components: codes.length, rows: 0, qualityScore: quality.score, roster: true },
+      });
+      return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, roster: true, schemaMapping: mapping.length ? mapping : null, anomalies: 0, events: 0, flagged: 0, pipelineMs: 0 });
     }
     const result = await runPipeline(batch.id);
     await db.insert(auditLog).values({
