@@ -94,6 +94,31 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     );
   }
 
+  // Non-analyzable uploads get an explanation page, never a screening cockpit
+  if (batch.status === "environment" || batch.status === "roster") {
+    const q: any = batch.dataQuality ?? {};
+    return (
+      <div className="fade-in space-y-3">
+        <div className="rounded-lg border border-line bg-panel p-6">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-fog">Mission control · registered file</div>
+          <h1 className="mt-1 font-mono text-[20px] font-semibold text-snow">{batch.batchCode}</h1>
+          <div className={cn("mt-2 inline-block rounded border px-2 py-0.5 font-mono text-[10px] uppercase",
+            batch.status === "environment" ? "border-sky-400/30 text-sky-300" : "border-purple-400/30 text-purple-300")}>
+            {batch.status === "environment" ? "chamber environment log — not component telemetry" : "component roster — no telemetry readings"}
+          </div>
+          <p className="mt-3 max-w-[680px] text-[12px] leading-relaxed text-fog">
+            {batch.status === "environment"
+              ? "This file contains chamber readings (temperature / humidity / voltage) rather than per-component measurements, so there is nothing to screen. The readings are registered for traceability."
+              : "This file lists components (identities / labels) but carries no measurement series, so the units are registered while awaiting their telemetry."}
+          </p>
+          {q?.note && <div className="mt-2 font-mono text-[11px] text-fog">{q.note}</div>}
+          <div className="mt-4"><UploadAnalyze batchId={batch.id} showRerun={false} /></div>
+        </div>
+        <div className="text-[11.5px] text-fog">To see full per-component screening, upload a telemetry CSV (component_code, hour, leakage_ua).</div>
+      </div>
+    );
+  }
+
   const stats: any = batch.stats ?? {};
   const quality: any = batch.dataQuality ?? {};
   const dist = stats.dist ?? {};
@@ -145,6 +170,11 @@ export default async function Overview({ searchParams }: { searchParams: Promise
 
   return (
     <div className="fade-in space-y-4">
+      {batch.status === "validated" && (
+        <div className="rounded-md border border-amber-400/30 bg-amber-400/10 px-4 py-2.5 font-mono text-[11px] text-amber-200">
+          ⏳ Background analysis running — KPIs and charts populate the moment it finishes (usually seconds).
+        </div>
+      )}
       {/* Mission header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
