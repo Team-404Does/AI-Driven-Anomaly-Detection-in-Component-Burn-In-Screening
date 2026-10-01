@@ -15,6 +15,10 @@ export async function POST(req: Request) {
     batchId = b?.id;
   }
   if (!batchId) return NextResponse.json({ error: "no batch" }, { status: 404 });
-  const result = await runPipeline(batchId);
-  return NextResponse.json({ ok: true, batchId, ...result });
+  // run in the background: long analyses outrun hosting proxy timeouts
+  // (Render kills requests around ~100 s) — the client polls batch status
+  void runPipeline(batchId)
+    .then((result) => console.log(`[analyze] batch ${batchId} done:`, result))
+    .catch((e) => console.error(`[analyze] batch ${batchId} failed`, e));
+  return NextResponse.json({ ok: true, batchId, analyzing: true });
 }

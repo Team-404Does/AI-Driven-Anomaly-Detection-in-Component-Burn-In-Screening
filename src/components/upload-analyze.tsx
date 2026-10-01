@@ -19,6 +19,19 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
     "Drift forecasting (DRIFT-LIN v2.1)", "Root-cause signatures", "Risk & decision engine",
   ];
 
+  // big files persist fast and analyze in the background (hosting proxies kill
+  // long requests) — poll until the batch flips to "analyzed" (cap ~5 min)
+  const pollBatch = async (key: string | number): Promise<boolean> => {
+    for (let i = 0; i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const s = await fetch(`/api/batch-status?code=${encodeURIComponent(String(key))}`, { cache: "no-store" }).then((r) => r.json());
+        if (s?.status === "analyzed" || s?.status === "roster") return true;
+      } catch { /* transient network errors — keep polling */ }
+    }
+    return false;
+  };
+
   const run = async (kind: "analyze" | "upload", file?: File) => {
     setBusy(kind); setProgress([]); setQuality(null); setSchemaMap(null); setError(null);
     let i = 0;
@@ -57,6 +70,11 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
       }
       if (j.quality) setQuality(j.quality);
       if (j.schemaMapping) setSchemaMap(j.schemaMapping);
+      if (j.analyzing) {
+        setProgress((p) => [...p, "Batch saved — analysis running in background…"]);
+        const done = await pollBatch(j.batchCode ?? j.batchId);
+        setProgress((p) => [...p, done ? "Background analysis complete ✓" : "Analysis still running — the batch will appear shortly, no action needed"]);
+      }
       // land the operator on the batch they just uploaded — tiny uploads
       // (roster logs, single virtual units) never become the default view
       if (kind === "upload" && (j.batchCode || j.batchId)) {
@@ -68,7 +86,8 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
       return;
     } finally {
       clearInterval(timer);
-      setProgress(steps);
+      // keep any background-analysis status lines appended during polling
+      setProgress((p) => (p.length > steps.length ? p : steps));
       // on failure keep the modal open so the error is actually seen —
       // silently closing looked like "the upload did nothing"
       setTimeout(() => {

@@ -144,9 +144,17 @@ export async function POST(req: Request) {
     return +((t - t0) / 3.6e6).toFixed(2);
   };
 
-  let missing = 0, dupes = 0, tsIssues = 0, impossible = 0;
-  const rows: any[] = [];
+  let missing = 0, dupes = 0, tsIssues = 0, impossible = 0, rowCount = 0;
   const seen = new Set<string>();
+  // telemetry is flushed to the DB in bounded parallel chunks instead of being
+  // held in memory — accumulating every parsed row OOMs the 512 MB Render free
+  // tier on large files
+  let teleBuf: any[] = [];
+  const teleInFlight: Promise<unknown>[] = [];
+  const drainTele = async () => {
+    if (teleBuf.length) { teleInFlight.push(db.insert(telemetry).values(teleBuf)); teleBuf = []; }
+    if (teleInFlight.length) await Promise.all(teleInFlight.splice(0));
+  };
   const compMeta = new Map<string, any>();
   const metaFrom = (c: string[]) => ({
     lot: c[H("lot_id")]?.trim() || "LOT-UPLOAD", wafer: c[H("wafer_id")]?.trim() || "WFR-U00",
@@ -172,12 +180,7 @@ export async function POST(req: Request) {
         const key = `${code}@${wc.hour}`;
         if (seen.has(key)) { dupes++; continue; }
         seen.add(key);
-        rows.push({
-          code, hour: wc.hour, leak,
-          vth: num(c[H("vth_mv")]), rds: num(c[H("rds_mohm")]) ?? 118,
-          temp: num(c[H("chamber_temp_c")]) ?? 125, vds: num(c[H("vds_stress_v")]) ?? 28,
-          channel: c[H("channel_id")]?.trim() || compMeta.get(code)!.channel,
-        });
+        rowCount++;
       }
     }
   } else if (rosterMode) {
@@ -212,23 +215,18 @@ export async function POST(req: Request) {
         maxHour: hour,
       });
     }
-    rows.push({
-      code, hour, leak,
-      vth: num(c[H("vth_mv")]), rds: num(c[H("rds_mohm")]) ?? 118,
-      temp: num(c[H("chamber_temp_c")]) ?? 125, vds: num(c[H("vds_stress_v")]) ?? 28,
-      channel: c[H("channel_id")]?.trim() || compMeta.get(code).channel,
-    });
+    rowCount++;
   }
   }
-  if (!rows.length && !compMeta.size)
+  if (!rowCount && !compMeta.size)
     return NextResponse.json({ error: "no valid rows parsed — check the file has a header and at least one data row" }, { status: 400 });
-  const total = rows.length + missing;
+  const total = rowCount + missing;
   const quality = {
     score: +(100 - (missing / Math.max(1, total)) * 100 * 1.4 - (dupes / Math.max(1, total)) * 300 - (impossible / Math.max(1, total)) * 400).toFixed(1),
     missingPct: +((missing / Math.max(1, total)) * 100).toFixed(2),
     duplicatePct: +((dupes / Math.max(1, total)) * 100).toFixed(2),
     unknownUnitsPct: 0, timestampIssuePct: +((tsIssues / Math.max(1, total)) * 100).toFixed(2),
-    impossibleValues: impossible, totalRows: rows.length, components: compMeta.size,
+    impossibleValues: impossible, totalRows: rowCount, components: compMeta.size,
     note: rosterMode
       ? "Roster upload — units registered; no telemetry series found in this file."
       : "Duplicates dropped; missing samples flagged, not imputed.",
@@ -261,31 +259,78 @@ export async function POST(req: Request) {
     const ret = await db.insert(components).values(vals).returning({ id: components.id, code: components.componentCode });
     ret.forEach((r) => (compIds[r.code.slice(codePrefix.length)] = r.id));
   }
+  // ---- pass 2: telemetry inserts in bounded parallel chunks (FK ids now known) ----
+  const pushTele = async (v: any) => {
+    teleBuf.push(v);
+    if (teleBuf.length >= 2500) {
+      teleInFlight.push(db.insert(telemetry).values(teleBuf));
+      teleBuf = [];
+      if (teleInFlight.length >= 3) await Promise.all(teleInFlight.splice(0));
+    }
+  };
+  const teleVal = (code: string, hour: number, leak: number | null, c: string[]) => ({
+    componentId: compIds[code], hour, leakageUa: leak, vthMv: num(c[H("vth_mv")]),
+    rdsMohm: num(c[H("rds_mohm")]) ?? 118, chamberTempC: num(c[H("chamber_temp_c")]) ?? 125,
+    vdsStressV: num(c[H("vds_stress_v")]) ?? 28,
+    channelId: c[H("channel_id")]?.trim() || compMeta.get(code)?.channel,
+  });
   try {
-    for (let i = 0; i < rows.length; i += 2500) {
-      await db.insert(telemetry).values(rows.slice(i, i + 2500).map((r) => ({
-        componentId: compIds[r.code], hour: r.hour, leakageUa: r.leak, vthMv: r.vth,
-        rdsMohm: r.rds, chamberTempC: r.temp, vdsStressV: r.vds, channelId: r.channel,
-      })));
+    if (!rosterMode) {
+      if (isWide) {
+        for (let i = headerIdx + 1; i < lines.length; i++) {
+          const c = splitCsv(lines[i], delim).map(unquote);
+          const code = (cIdx >= 0 ? c[cIdx]?.trim() : "") || "CHAMBER-LOG";
+          if (!compIds[code]) continue;
+          for (const wc of wideCols) {
+            const leak = num(c[wc.idx]);
+            if (leak == null) continue;
+            if (seen.has(`${code}@${wc.hour}`)) continue;
+            await pushTele(teleVal(code, wc.hour, leak, c));
+          }
+        }
+      } else {
+        for (let i = headerIdx + 1; i < lines.length; i++) {
+          const c = splitCsv(lines[i], delim).map(unquote);
+          const code = (cIdx >= 0 ? c[cIdx]?.trim() : "") || "CHAMBER-LOG";
+          const hour = hIdx >= 0 ? num(c[hIdx]) : tsIdx >= 0 ? tsHours(c[tsIdx]) : null;
+          if (!compIds[code] || hour == null) continue;
+          const leak = num(c[lIdx]);
+          if (seen.has(`${code}@${hour}`)) continue;
+          await pushTele(teleVal(code, hour, leak, c));
+        }
+      }
+      await drainTele();
     }
-    if (rosterMode) {
-      await db.insert(auditLog).values({
-        userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
-        detail: { components: codes.length, rows: 0, qualityScore: quality.score, roster: true },
-      });
-      return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, roster: true, schemaMapping: mapping.length ? mapping : null, anomalies: 0, events: 0, flagged: 0, pipelineMs: 0 });
-    }
-    const result = await runPipeline(batch.id);
-    await db.insert(auditLog).values({
-      userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
-      detail: { components: codes.length, rows: rows.length, qualityScore: quality.score },
-    });
-    return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, schemaMapping: mapping.length ? mapping : null, ...result });
   } catch (e: any) {
-    console.error("[upload] analysis failed", e);
+    console.error("[upload] telemetry persist failed", e);
     // never let the API die with an opaque 500 — the modal surfaces this text
     return NextResponse.json(
-      { error: e?.message ? `Analysis failed: ${e.message}` : "Analysis failed — batch saved, re-run analysis from the dashboard." },
+      { error: e?.message ? `Persist failed: ${e.message}` : "Persist failed — nothing was saved." },
       { status: 500 });
   }
+
+  if (rosterMode) {
+    await db.insert(auditLog).values({
+      userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
+      detail: { components: codes.length, rows: 0, qualityScore: quality.score, roster: true },
+    });
+    return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, roster: true, schemaMapping: mapping.length ? mapping : null, anomalies: 0, events: 0, flagged: 0, pipelineMs: 0 });
+  }
+
+  // ---- analysis runs AFTER the response ----
+  // Render's proxy terminates requests around ~100 s; persisting a large CSV
+  // already consumes much of that budget, so the pipeline runs in the
+  // background and the modal polls /api/batch-status until the batch flips to
+  // "analyzed". (Requires a long-running host — Render/Railway.)
+  void runPipeline(batch.id)
+    .then(async (result) => {
+      await db.insert(auditLog).values({
+        userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
+        detail: { components: codes.length, rows: rowCount, qualityScore: quality.score, background: true },
+      });
+      console.log(`[upload] ${batchCode} analyzed in background:`, result);
+    })
+    .catch((e) => console.error(`[upload] ${batchCode} background analysis failed`, e));
+
+  return NextResponse.json({ ok: true, batchId: batch.id, batchCode, quality, schemaMapping: mapping.length ? mapping : null, analyzing: true });
 }
