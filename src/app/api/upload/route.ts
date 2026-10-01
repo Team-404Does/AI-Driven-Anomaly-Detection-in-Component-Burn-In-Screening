@@ -113,6 +113,7 @@ export async function POST(req: Request) {
 
   // no leakage column → pick the most measurement-like numeric column
   const META = /timestamp|datetime|^date|^time$|elapsed|index|^id$|code|component|unit|device|serial|lot|wafer|manufact|channel|rack|row|col|comment|note|label|name|status|type/;
+  let pickerPicked = false;
   if (lIdx < 0 && !isWide) {
     let best = -1, bestScore = -1;
     for (let j = 0; j < header.length; j++) {
@@ -130,11 +131,18 @@ export async function POST(req: Request) {
     }
     if (best >= 0) {
       lIdx = best;
+      pickerPicked = true;
       mapping.push(`no leakage_ua — using "${header[lIdx]}" as the measured parameter`);
     }
   }
   // roster/manifest file: component identities but no telemetry anywhere
   const rosterMode = lIdx < 0 && !isWide && cIdx >= 0;
+  // chamber environment log (temperature/humidity/voltage series): the picked
+  // parameter is not a leakage-like measurement, so screening it against the
+  // µA limit would flag it CRITICAL nonsense — register it, explain, don't screen
+  const LEAK_LIKE = /leak|current|_ua|ua$|amp|power/i;
+  const envLogMode = !rosterMode && !isWide && pickerPicked && lIdx >= 0 && !LEAK_LIKE.test(header[lIdx]);
+  if (envLogMode) mapping.push("chamber environment log — no component telemetry found; readings registered, nothing screened");
 
   let t0: number | null = null;
   const tsHours = (v: string | undefined): number | null => {
@@ -237,8 +245,20 @@ export async function POST(req: Request) {
   const batchCode = `BN-UP-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(Math.floor(Math.random() * 900) + 100)}`;
   const [batch] = await db.insert(batches).values({
     batchCode, manufacturer: "upload", sourceFile: "user-upload.csv",
-    status: rosterMode ? "roster" : "validated", componentCount: codes.length, dataQuality: quality,
+    status: envLogMode ? "environment" : rosterMode ? "roster" : "validated", componentCount: envLogMode ? 0 : codes.length, dataQuality: quality,
   }).returning();
+
+  if (envLogMode) {
+    await db.insert(auditLog).values({
+      userName: "OPERATOR", action: "BATCH_UPLOAD", objectType: "batch", objectId: batchCode,
+      detail: { environment: true, rows: rowCount, qualityScore: quality.score },
+    });
+    return NextResponse.json({
+      ok: true, batchId: batch.id, batchCode, quality, environment: true,
+      schemaMapping: mapping.length ? mapping : null,
+      message: `Environment log — this file contains chamber readings ("${header[lIdx]}") , not component telemetry. ${rowCount} readings registered for traceability; nothing was screened. Upload a burn-in telemetry CSV (component_code, hour, leakage_ua) to screen components.`,
+    });
+  }
 
   // component_code is GLOBALLY unique, so uploaded codes are namespaced per
   // batch — otherwise re-uploading any CSV (or two teams uploading similar

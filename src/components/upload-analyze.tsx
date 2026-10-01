@@ -11,6 +11,7 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   const [open, setOpen] = useState(false);
   const [quality, setQuality] = useState<any>(null);
   const [schemaMap, setSchemaMap] = useState<string[] | null>(null);
+  const [envMsg, setEnvMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -33,7 +34,7 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   };
 
   const run = async (kind: "analyze" | "upload", file?: File) => {
-    setBusy(kind); setProgress([]); setQuality(null); setSchemaMap(null); setError(null);
+    setBusy(kind); setProgress([]); setQuality(null); setSchemaMap(null); setEnvMsg(null); setError(null);
     let i = 0;
     const timer = setInterval(() => { if (i < steps.length) { setProgress((p) => [...p, steps[i++]]); } }, 420);
     let failed = false;
@@ -70,14 +71,16 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
       }
       if (j.quality) setQuality(j.quality);
       if (j.schemaMapping) setSchemaMap(j.schemaMapping);
+      if (j.environment && j.message) setEnvMsg(j.message);
       if (j.analyzing) {
         setProgress((p) => [...p, "Batch saved — analysis running in background…"]);
         const done = await pollBatch(j.batchCode ?? j.batchId);
         setProgress((p) => [...p, done ? "Background analysis complete ✓" : "Analysis still running — the batch will appear shortly, no action needed"]);
       }
-      // land the operator on the batch they just uploaded — tiny uploads
-      // (roster logs, single virtual units) never become the default view
-      if (kind === "upload" && (j.batchCode || j.batchId)) {
+      // land the operator on the batch they just uploaded — but environment
+      // logs and rosters have nothing to show, so stay put and let the modal
+      // message explain what happened
+      if (kind === "upload" && !j.environment && !j.roster && (j.batchCode || j.batchId)) {
         router.push(`/?batch=${encodeURIComponent(String(j.batchCode ?? j.batchId))}`);
       }
     } catch (e: any) {
@@ -151,6 +154,11 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
               {error && !busy && (
                 <div className="mt-3 rounded-md border border-red-400/30 bg-red-400/10 p-3 font-mono text-[11px] text-red-200">
                   {error}
+                </div>
+              )}
+              {envMsg && !busy && (
+                <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-400/10 p-3 font-mono text-[11px] leading-relaxed text-amber-200">
+                  {envMsg}
                 </div>
               )}
               {schemaMap && !busy && (
