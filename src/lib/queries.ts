@@ -17,9 +17,12 @@ export async function getActiveBatch(bParam?: string) {
     const hit = all.find((b) => b.batchCode === bParam || String(b.id) === bParam);
     if (hit) return hit;
   }
-  // newest ANALYZED batch first — a roster upload with no analysis should not
-  // blank out the whole cockpit for the operator
-  return all.find((b) => b.status === "analyzed") ?? all[0];
+  // default view: newest meaningful ANALYZED batch. Tiny uploads (roster logs,
+  // single virtual chamber units) must not hijack the whole cockpit — the
+  // upload modal navigates to them explicitly instead.
+  return all.find((b) => b.status === "analyzed" && (b.componentCount ?? 0) >= 10)
+    ?? all.find((b) => b.status === "analyzed")
+    ?? all[0];
 }
 
 export async function getChamber(batchId: number, rack: number) {

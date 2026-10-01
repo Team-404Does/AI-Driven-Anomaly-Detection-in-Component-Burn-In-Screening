@@ -4,9 +4,9 @@ import Triage from "@/components/triage";
 
 export const dynamic = "force-dynamic";
 
-export default async function AnomaliesPage({ searchParams }: { searchParams: Promise<{ mode?: string }> }) {
+export default async function AnomaliesPage({ searchParams }: { searchParams: Promise<{ mode?: string; batch?: string }> }) {
   const sp = await searchParams;
-  const batch = await getActiveBatch();
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   const queue = await getAnomalyQueue(batch.id);
   const events = await getEquipmentEvents();

@@ -8,8 +8,9 @@ import UploadAnalyze from "@/components/upload-analyze";
 
 export const dynamic = "force-dynamic";
 
-export default async function Overview() {
-  const batch = await getActiveBatch();
+export default async function Overview({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
+  const sp = await searchParams;
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return <div className="text-fog">No batch. Trigger POST /api/seed.</div>;
   const stats: any = batch.stats ?? {};
   const quality: any = batch.dataQuality ?? {};

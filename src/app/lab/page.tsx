@@ -7,8 +7,9 @@ import LabClient from "@/components/lab-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function LabPage() {
-  const batch = await getActiveBatch();
+export default async function LabPage({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
+  const sp = await searchParams;
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   // interesting candidates: flagged first, then stable healthy, plus any hidden
   const flagged = await db.select().from(components)

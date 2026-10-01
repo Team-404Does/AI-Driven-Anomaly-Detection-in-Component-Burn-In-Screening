@@ -7,9 +7,9 @@ import { GitBranch, Factory } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function GenealogyPage({ searchParams }: { searchParams: Promise<{ lot?: string }> }) {
+export default async function GenealogyPage({ searchParams }: { searchParams: Promise<{ lot?: string; batch?: string }> }) {
   const sp = await searchParams;
-  const batch = await getActiveBatch();
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   const tree = await getGenealogy(batch.id);
   const selLot = sp.lot ?? tree.slice().sort((a: any, b: any) => b.flagged / b.count - a.flagged / a.count)[0]?.lot;

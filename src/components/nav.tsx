@@ -71,7 +71,13 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
     return () => clearTimeout(t);
   }, [q]);
 
-  const active = batches[0];
+  // active batch follows the URL (?batch=CODE); falls back to the first batch
+  const [activeCode, setActiveCode] = useState("");
+  useEffect(() => {
+    const u = new URLSearchParams(window.location.search);
+    setActiveCode(u.get("batch") ?? batches[0]?.batchCode ?? "");
+  }, [pathname, batches]);
+  const active = batches.find((b) => b.batchCode === activeCode) ?? batches[0];
 
   return (
     <div className="min-h-screen bg-ink text-snow">
@@ -134,9 +140,18 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
       <header className="fixed left-[216px] right-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-panel/85 px-5 backdrop-blur">
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-[0.14em] text-fog">Active batch</span>
-          <span className="rounded border border-line2 bg-panel2 px-2 py-0.5 font-mono text-[12px] text-sky-300">
-            {active?.batchCode ?? "—"}
-          </span>
+          <select
+            value={active?.batchCode ?? ""}
+            onChange={(e) => router.push(`${pathname}?batch=${encodeURIComponent(e.target.value)}`)}
+            title="Switch active batch"
+            className="max-w-[240px] truncate rounded border border-line2 bg-panel2 px-2 py-0.5 font-mono text-[12px] text-sky-300 outline-none"
+          >
+            {batches.map((b) => (
+              <option key={b.batchCode} value={b.batchCode} className="bg-panel">
+                {b.batchCode} · {b.componentCount.toLocaleString()}u · {b.status}
+              </option>
+            ))}
+          </select>
           <span className="text-[11px] text-fog">{active ? `${active.componentCount.toLocaleString()} units · ${active.status}` : ""}</span>
         </div>
         <div className="ml-auto flex items-center gap-3">

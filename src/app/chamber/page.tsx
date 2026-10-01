@@ -7,9 +7,9 @@ import { PageHead } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-export default async function ChamberPage({ searchParams }: { searchParams: Promise<{ r?: string }> }) {
+export default async function ChamberPage({ searchParams }: { searchParams: Promise<{ r?: string; batch?: string }> }) {
   const sp = await searchParams;
-  const batch = await getActiveBatch();
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return <div className="text-fog">No batch loaded.</div>;
   const rack = Math.min(7, Math.max(0, Number(sp.r ?? 0)));
   const comps = await getChamber(batch.id, rack);

@@ -4,12 +4,13 @@ import PassportClient from "@/components/passport-client";
 
 export const dynamic = "force-dynamic";
 
-export default async function PassportPage({ params }: { params: Promise<{ code: string }> }) {
+export default async function PassportPage({ params, searchParams }: { params: Promise<{ code: string }>; searchParams: Promise<{ batch?: string }> }) {
   const { code } = await params;
+  const sp = await searchParams;
   const data = await getPassport(code);
   if (!data) notFound();
   const { comp, tel, ans, preds, sigs, risks, fbs, reps, peer, peerTel, lotRows, lotStats, audits } = data;
-  const batch = await getActiveBatch();
+  const batch = await getActiveBatch(sp.batch);
   const corridor = batch ? await batchKbMarginals(batch.id) : [];
 
   return (

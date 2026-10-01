@@ -8,8 +8,9 @@ import { eq, sql } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export default async function AnalyticsPage() {
-  const batch = await getActiveBatch();
+export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
+  const sp = await searchParams;
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   const stats: any = batch.stats ?? {};
 

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ComponentsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
-  const batch = await getActiveBatch();
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   const stats: any = batch.stats ?? {};
   const { rows, total, page, pages } = await getComponents(batch.id, {

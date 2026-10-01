@@ -6,9 +6,9 @@ import { Cpu, GitCommitVertical, ShieldCheck, ChevronLeft, ChevronRight } from "
 
 export const dynamic = "force-dynamic";
 
-export default async function AuditPage({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
+export default async function AuditPage({ searchParams }: { searchParams: Promise<{ page?: string; batch?: string }> }) {
   const sp = await searchParams;
-  const batch = await getActiveBatch();
+  const batch = await getActiveBatch(sp.batch);
   const models = await getModels();
   const page = Math.max(1, Number(sp.page ?? 1));
   const audit = await getAudit(page, 26);

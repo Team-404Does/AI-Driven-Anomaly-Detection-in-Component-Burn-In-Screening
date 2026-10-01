@@ -9,8 +9,9 @@ import { ShieldQuestion, GitBranch, Wrench } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-export default async function RootCausePage() {
-  const batch = await getActiveBatch();
+export default async function RootCausePage({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
+  const sp = await searchParams;
+  const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   const sigs = await db.select({ s: failureSignatures, c: components })
     .from(failureSignatures).innerJoin(components, eq(failureSignatures.componentId, components.id))
