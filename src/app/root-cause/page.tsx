@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card, CardHead, PageHead, Empty, ChartNote } from "@/components/ui";
 import EChart, { TOOLTIP } from "@/components/echart";
-import { getActiveBatch, getEquipmentEvents } from "@/lib/queries";
+import { ALL_BATCHES, getActiveBatch, getEquipmentEvents } from "@/lib/queries";
 import { db } from "@/db";
 import { components, failureSignatures } from "@/db/schema";
 import { desc, eq, sql } from "drizzle-orm";
@@ -15,7 +15,7 @@ export default async function RootCausePage({ searchParams }: { searchParams: Pr
   if (!batch) return null;
   const sigs = await db.select({ s: failureSignatures, c: components })
     .from(failureSignatures).innerJoin(components, eq(failureSignatures.componentId, components.id))
-    .where(eq(components.batchId, batch.id)).orderBy(desc(failureSignatures.probability));
+    .where(batch.id === ALL_BATCHES ? undefined : eq(components.batchId, batch.id)).orderBy(desc(failureSignatures.probability));
   const events = await getEquipmentEvents();
 
   const bySig = new Map<string, number>();

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card, CardHead, Kpi, Mono, PageHead, DecisionPill, Empty, Meter, ChartLegend, ChartNote } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
-import { getActiveBatch, getAnomalyQueue, getAudit, getEquipmentEvents } from "@/lib/queries";
+import { ALL_BATCHES, getActiveBatch, getAnomalyQueue, getAudit, getEquipmentEvents, getFleetSummary } from "@/lib/queries";
 import { dt, fmt, cn } from "@/lib/utils";
 import { ArrowRight, Gauge, ShieldAlert, Sparkles, Wrench, Layers, ShieldCheck, Radar } from "lucide-react";
 import UploadAnalyze from "@/components/upload-analyze";
@@ -12,6 +12,73 @@ export default async function Overview({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const batch = await getActiveBatch(sp.batch);
   if (!batch) return <div className="text-fog">No batch. Trigger POST /api/seed.</div>;
+
+  // ---- FLEET VIEW: every uploaded dataset, aggregated ----
+  if (batch.id === ALL_BATCHES) {
+    const fleet = await getFleetSummary();
+    const fleetQueue = (await getAnomalyQueue(ALL_BATCHES)).slice(0, 8);
+    const statusCls = (s: string) =>
+      s === "analyzed" ? "border-emerald-400/30 text-emerald-300"
+      : s === "validated" ? "border-amber-400/30 text-amber-300"
+      : s === "environment" ? "border-sky-400/30 text-sky-300"
+      : s === "roster" ? "border-purple-400/30 text-purple-300"
+      : "border-line2 text-fog";
+    return (
+      <div className="fade-in space-y-3">
+        <div className="flex items-end justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.18em] text-fog">Mission control · fleet view</div>
+            <h1 className="font-mono text-[20px] font-semibold tracking-tight text-snow">All datasets</h1>
+            <div className="text-[11.5px] text-fog">Every dataset you upload, aggregated — drill into any batch below or via the topbar switcher.</div>
+          </div>
+          <UploadAnalyze batchId={batch.id} showRerun={false} />
+        </div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Kpi label="Datasets analyzed" accent="#38bdf8" value={fleet.totals.datasets} sub="batches screened so far" />
+          <Kpi label="Units screened" accent="#38bdf8" value={fmt(fleet.totals.units, 0)} sub="components across all datasets" />
+          <Kpi label="Flagged" tone="text-red-300" value={fmt(fleet.totals.flagged, 0)} sub="watch / review / reject" />
+          <Kpi label="Hidden anomalies" accent="#c084fc" value={fmt(fleet.totals.hidden, 0)} sub="pass static, fail dynamic" />
+        </div>
+        <Card>
+          <CardHead title="Uploaded datasets" sub="every batch in the database — click one to open its full cockpit" />
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-line text-left text-[10px] uppercase tracking-wider text-fog">
+                {["Batch", "Status", "Units", "Flagged", "Quality", "Uploaded"].map((h) => <th key={h} className="px-4 py-2 font-medium">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/60">
+              {fleet.rows.map((r) => (
+                <tr key={r.id} className="hover:bg-panel2">
+                  <td className="px-4 py-2"><Link href={`/?batch=${r.code}`} className="font-mono text-sky-300 hover:text-sky-200">{r.code}</Link></td>
+                  <td className="px-4 py-2"><span className={cn("rounded border px-2 py-0.5 font-mono text-[10px]", statusCls(r.status))}>{r.status}</span></td>
+                  <td className="px-4 py-2 font-mono text-snow">{fmt(r.units ?? 0, 0)}</td>
+                  <td className="px-4 py-2 font-mono text-amber-300">{r.flagged ?? 0}</td>
+                  <td className="px-4 py-2 font-mono text-fog">{(r.quality as any)?.score != null ? `${(r.quality as any).score}%` : "—"}</td>
+                  <td className="px-4 py-2 text-fog">{r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <Card>
+          <CardHead title="Top anomalies across every dataset" sub="highest-scoring units from all uploads combined" />
+          {fleetQueue.length ? (
+            <div className="divide-y divide-line/60">
+              {fleetQueue.map(({ a, c }) => (
+                <Link key={a.id} href={`/components/${c.componentCode}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-panel2">
+                  <span className="font-mono text-[12px] text-sky-300">{c.componentCode}</span>
+                  <span className="text-[11px] text-fog">{c.lotId} · {c.decision ?? "—"}</span>
+                  <span className="ml-auto font-mono text-[11px] text-red-300">score {(a.anomalyScore ?? 0).toFixed(2)}</span>
+                </Link>
+              ))}
+            </div>
+          ) : <Empty msg="No anomalies across any dataset yet." />}
+        </Card>
+      </div>
+    );
+  }
+
   const stats: any = batch.stats ?? {};
   const quality: any = batch.dataQuality ?? {};
   const dist = stats.dist ?? {};

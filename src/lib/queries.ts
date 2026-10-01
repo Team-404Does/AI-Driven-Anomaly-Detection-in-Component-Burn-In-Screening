@@ -10,30 +10,70 @@ export async function getBatches() {
   return db.select().from(batches).orderBy(desc(batches.createdAt));
 }
 
+// Sentinel id: when the active "batch" is ALL_DATASETS the dashboards
+// aggregate EVERY uploaded dataset (?batch=all / topbar switcher).
+export const ALL_BATCHES = -1;
+
 export async function getActiveBatch(bParam?: string) {
   const all = await getBatches();
   if (!all.length) return null;
+  const analyzed = all.filter((b) => b.status === "analyzed");
+  const fleet = (): any => ({
+    id: ALL_BATCHES, batchCode: "ALL DATASETS", status: "all",
+    componentCount: analyzed.reduce((s, b) => s + (b.componentCount ?? 0), 0),
+    createdAt: all[0].createdAt, stats: {}, dataQuality: {},
+  });
+  if (bParam === "all" && analyzed.length) return fleet();
   if (bParam) {
     const hit = all.find((b) => b.batchCode === bParam || String(b.id) === bParam);
     if (hit) return hit;
   }
-  // default view: newest meaningful ANALYZED batch. Tiny uploads (roster logs,
-  // single virtual chamber units) must not hijack the whole cockpit — the
-  // upload modal navigates to them explicitly instead.
-  return all.find((b) => b.status === "analyzed" && (b.componentCount ?? 0) >= 10)
-    ?? all.find((b) => b.status === "analyzed")
+  // default view: with two or more real datasets analyzed, show the fleet
+  // (every dataset at once) — a single dataset still gets the focused cockpit.
+  // Tiny uploads never hijack the view; the upload modal navigates to them.
+  if (analyzed.filter((b) => (b.componentCount ?? 0) >= 10).length >= 2) return fleet();
+  return analyzed.find((b) => (b.componentCount ?? 0) >= 10)
+    ?? analyzed[0]
     ?? all[0];
 }
 
+// Per-dataset rollup + grand totals for the fleet view.
+export async function getFleetSummary() {
+  const rows = await db.select({
+    id: batches.id, code: batches.batchCode, status: batches.status, units: batches.componentCount,
+    createdAt: batches.createdAt, quality: batches.dataQuality,
+    flagged: sql<number>`(select count(*) from components c where c.batch_id = ${batches.id} and c.decision is not null and c.decision not in ('PASS','PASS-EARLY'))`,
+    hidden: sql<number>`(select count(*) from components c where c.batch_id = ${batches.id} and c.hidden_anomaly)`,
+  }).from(batches).orderBy(desc(batches.createdAt));
+  const byDecision = await db.select({ decision: components.decision, n: count() }).from(components).groupBy(components.decision);
+  const [hidden] = await db.select({ n: count() }).from(components).where(eq(components.hiddenAnomaly, true));
+  const pass = ["PASS", "PASS-EARLY"];
+  return {
+    rows,
+    totals: {
+      units: rows.filter((r) => r.status === "analyzed").reduce((s, r) => s + (r.units ?? 0), 0),
+      flagged: byDecision.filter((d) => d.decision && !pass.includes(d.decision)).reduce((s, d) => s + d.n, 0),
+      pass: byDecision.filter((d) => pass.includes(d.decision ?? "")).reduce((s, d) => s + d.n, 0),
+      hidden: hidden?.n ?? 0,
+      datasets: rows.filter((r) => r.status === "analyzed").length,
+      byDecision,
+    },
+  };
+}
+
 export async function getChamber(batchId: number, rack: number) {
+  const where = batchId === ALL_BATCHES
+    ? eq(components.rack, rack)
+    : and(eq(components.batchId, batchId), eq(components.rack, rack));
   return db.select().from(components)
-    .where(and(eq(components.batchId, batchId), eq(components.rack, rack)))
+    .where(where)
     .orderBy(asc(components.chamberRow), asc(components.chamberCol));
 }
 
 export interface CompFilter { q?: string; status?: string; lot?: string; decision?: string; hidden?: boolean; page?: number; pageSize?: number; }
 export async function getComponents(batchId: number, f: CompFilter) {
-  const conds: SQL[] = [eq(components.batchId, batchId)];
+  const conds: SQL[] = [];
+  if (batchId !== ALL_BATCHES) conds.push(eq(components.batchId, batchId));
   if (f.q) conds.push(or(ilike(components.componentCode, `%${f.q}%`), ilike(components.socketId, `%${f.q}%`), ilike(components.lotId, `%${f.q}%`))!);
   if (f.status) conds.push(eq(components.status, f.status));
   if (f.lot) conds.push(eq(components.lotId, f.lot));
@@ -80,15 +120,15 @@ export async function getAnomalyQueue(batchId: number) {
   const rows = await db.select({
     a: anomalies, c: components,
   }).from(anomalies).innerJoin(components, eq(anomalies.componentId, components.id))
-    .where(eq(components.batchId, batchId))
+    .where(batchId === ALL_BATCHES ? undefined : eq(components.batchId, batchId))
     .orderBy(desc(anomalies.anomalyScore), desc(anomalies.createdAt));
   const sigs = await db.select().from(failureSignatures)
     .innerJoin(components, eq(failureSignatures.componentId, components.id))
-    .where(eq(components.batchId, batchId));
+    .where(batchId === ALL_BATCHES ? undefined : eq(components.batchId, batchId));
   const sigMap = new Map(sigs.map((s) => [s.failure_signatures.componentId, s.failure_signatures]));
   const preds = await db.select().from(predictions)
     .innerJoin(components, eq(predictions.componentId, components.id))
-    .where(eq(components.batchId, batchId));
+    .where(batchId === ALL_BATCHES ? undefined : eq(components.batchId, batchId));
   const predMap = new Map(preds.map((p) => [p.predictions.componentId, p.predictions]));
   return rows.map((r) => ({ ...r, sig: sigMap.get(r.c.id) ?? null, pred: predMap.get(r.c.id) ?? null }));
 }
@@ -102,7 +142,7 @@ export async function getGenealogy(batchId: number) {
     lot: components.lotId, wafer: components.waferId, mfr: components.manufacturer,
     status: components.status, n: count(), avg: sql<number>`avg(${components.anomalyScore})`,
     maxRisk: sql<number>`max(${components.riskScore})`,
-  }).from(components).where(eq(components.batchId, batchId))
+  }).from(components).where(batchId === ALL_BATCHES ? undefined : eq(components.batchId, batchId))
     .groupBy(components.lotId, components.waferId, components.manufacturer, components.status);
   // assemble tree
   const lots = new Map<string, any>();
@@ -141,7 +181,7 @@ export async function getReport(id: number) {
 export async function getFeedbackAll(batchId: number) {
   return db.select({ f: feedback, c: components }).from(feedback)
     .innerJoin(components, eq(feedback.componentId, components.id))
-    .where(eq(components.batchId, batchId)).orderBy(desc(feedback.createdAt)).limit(30);
+    .where(batchId === ALL_BATCHES ? undefined : eq(components.batchId, batchId)).orderBy(desc(feedback.createdAt)).limit(30);
 }
 
 export interface HistoryRow { date: string; batch: string; result: string; health: number | null; score: number | null; units?: number }
@@ -203,10 +243,11 @@ export async function batchKbMarginals(batchId: number) {
     medTemp: sql<number>`percentile_cont(0.5) within group (order by ${telemetry.chamberTempC})`,
   };
   const q = db.select(base).from(telemetry).innerJoin(components, eq(telemetry.componentId, components.id));
-  const tagged = await q.where(and(eq(components.batchId, batchId), eq(components.scenarioTag, "normal")))
+  const bCond = batchId === ALL_BATCHES ? undefined : eq(components.batchId, batchId);
+  const tagged = await q.where(bCond ? and(bCond, eq(components.scenarioTag, "normal")) : eq(components.scenarioTag, "normal"))
     .groupBy(telemetry.hour).orderBy(asc(telemetry.hour));
   if (tagged.length > 0) return tagged;
-  const all = await q.where(eq(components.batchId, batchId))
+  const allRows = await q.where(bCond)
     .groupBy(telemetry.hour).orderBy(asc(telemetry.hour));
-  return all;
+  return allRows;
 }

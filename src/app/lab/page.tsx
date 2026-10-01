@@ -1,5 +1,5 @@
 import { PageHead } from "@/components/ui";
-import { getActiveBatch } from "@/lib/queries";
+import { ALL_BATCHES, getActiveBatch } from "@/lib/queries";
 import { db } from "@/db";
 import { components } from "@/db/schema";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
@@ -12,11 +12,12 @@ export default async function LabPage({ searchParams }: { searchParams: Promise<
   const batch = await getActiveBatch(sp.batch);
   if (!batch) return null;
   // interesting candidates: flagged first, then stable healthy, plus any hidden
+  const inAll = batch.id === ALL_BATCHES;
   const flagged = await db.select().from(components)
-    .where(and(eq(components.batchId, batch.id), isNotNull(components.anomalyScore)))
+    .where(inAll ? isNotNull(components.anomalyScore) : and(eq(components.batchId, batch.id), isNotNull(components.anomalyScore)))
     .orderBy(desc(components.anomalyScore)).limit(12);
   const healthy = await db.select().from(components)
-    .where(and(eq(components.batchId, batch.id), eq(components.status, "healthy")))
+    .where(inAll ? eq(components.status, "healthy") : and(eq(components.batchId, batch.id), eq(components.status, "healthy")))
     .orderBy(sql`random()`).limit(6);
   return (
     <div className="fade-in space-y-3">

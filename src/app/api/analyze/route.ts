@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     const [b] = await db.select().from(batches).orderBy(desc(batches.createdAt)).limit(1);
     batchId = b?.id;
   }
-  if (!batchId) return NextResponse.json({ error: "no batch" }, { status: 404 });
+  if (!batchId || batchId < 0) return NextResponse.json({ error: "no batch" }, { status: 404 });
   // run in the background: long analyses outrun hosting proxy timeouts
   // (Render kills requests around ~100 s) — the client polls batch status
   void runPipeline(batchId)

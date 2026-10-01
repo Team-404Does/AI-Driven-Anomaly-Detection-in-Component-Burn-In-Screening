@@ -1,6 +1,6 @@
 import { Card, CardHead, PageHead, Kpi, ChartLegend, ChartNote } from "@/components/ui";
 import EChart, { AXIS, TOOLTIP } from "@/components/echart";
-import { getActiveBatch, batchKbMarginals } from "@/lib/queries";
+import { ALL_BATCHES, getActiveBatch, batchKbMarginals } from "@/lib/queries";
 import { db } from "@/db";
 import { components, telemetry } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -17,11 +17,11 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
   // per-component aggregates for scatter + histograms
   const perComp = await db.select({
     code: components.componentCode, status: components.status, lot: components.lotId,
-    drift: components.driftSlope, ascore: components.anomalyScore,
+    drift: components.driftSlope, ascore: components.anomalyScore, decision: components.decision,
     meanTemp: sql<number>`(SELECT avg(t.chamber_temp_c) FROM telemetry t WHERE t.component_id = ${components.id})`,
     lastLeak: sql<number>`(SELECT t.leakage_ua FROM telemetry t WHERE t.component_id = ${components.id} AND t.leakage_ua IS NOT NULL ORDER BY t.hour DESC LIMIT 1)`,
     vthDrift: sql<number>`((SELECT t.vth_mv FROM telemetry t WHERE t.component_id = ${components.id} AND t.vth_mv IS NOT NULL ORDER BY t.hour DESC LIMIT 1) - (SELECT t.vth_mv FROM telemetry t WHERE t.component_id = ${components.id} AND t.vth_mv IS NOT NULL ORDER BY t.hour ASC LIMIT 1))`,
-  }).from(components).where(eq(components.batchId, batch.id));
+  }).from(components).where(batch.id === ALL_BATCHES ? undefined : eq(components.batchId, batch.id));
 
   const corridor = await batchKbMarginals(batch.id);
 
@@ -104,7 +104,9 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     ],
   };
 
-  const flaggedN = stats.flagged ?? 0;
+  const flaggedN = batch.id === ALL_BATCHES
+    ? perComp.filter((p) => p.decision && !["PASS", "PASS-EARLY"].includes(p.decision)).length
+    : (stats.flagged ?? 0);
   return (
     <div className="fade-in space-y-3">
       <PageHead title="Batch Analytics" sub="Population distributions, environment correlation and temporal corridors over normal-population statistics." />

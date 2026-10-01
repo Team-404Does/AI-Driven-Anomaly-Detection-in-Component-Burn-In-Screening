@@ -71,13 +71,18 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
     return () => clearTimeout(t);
   }, [q]);
 
-  // active batch follows the URL (?batch=CODE); falls back to the first batch
+  // active batch follows the URL (?batch=CODE | all); with multiple datasets
+  // the fleet view (ALL DATASETS) is the default
+  const totalUnits = batches.reduce((s, b) => s + (b.componentCount ?? 0), 0);
   const [activeCode, setActiveCode] = useState("");
+  const fleetActive = activeCode === "all";
   useEffect(() => {
     const u = new URLSearchParams(window.location.search);
-    setActiveCode(u.get("batch") ?? batches[0]?.batchCode ?? "");
+    setActiveCode(u.get("batch") ?? (batches.length >= 2 ? "all" : batches[0]?.batchCode ?? ""));
   }, [pathname, batches]);
-  const active = batches.find((b) => b.batchCode === activeCode) ?? batches[0];
+  const active = fleetActive
+    ? { id: -1, batchCode: "ALL DATASETS", status: "all", componentCount: totalUnits }
+    : batches.find((b) => b.batchCode === activeCode) ?? batches[0];
 
   return (
     <div className="min-h-screen bg-ink text-snow">
@@ -141,18 +146,23 @@ export function Shell({ children, batches }: { children: React.ReactNode; batche
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-[0.14em] text-fog">Active batch</span>
           <select
-            value={active?.batchCode ?? ""}
+            value={fleetActive ? "all" : active?.batchCode ?? ""}
             onChange={(e) => router.push(`${pathname}?batch=${encodeURIComponent(e.target.value)}`)}
             title="Switch active batch"
             className="max-w-[240px] truncate rounded border border-line2 bg-panel2 px-2 py-0.5 font-mono text-[12px] text-sky-300 outline-none"
           >
+            {batches.length >= 2 && (
+              <option value="all" className="bg-panel">
+                ALL DATASETS · {totalUnits.toLocaleString()}u · fleet view
+              </option>
+            )}
             {batches.map((b) => (
               <option key={b.batchCode} value={b.batchCode} className="bg-panel">
                 {b.batchCode} · {b.componentCount.toLocaleString()}u · {b.status}
               </option>
             ))}
           </select>
-          <span className="text-[11px] text-fog">{active ? `${active.componentCount.toLocaleString()} units · ${active.status}` : ""}</span>
+          <span className="text-[11px] text-fog">{active ? `${active.componentCount.toLocaleString()} units · ${active.status === "all" ? "aggregated" : active.status}` : ""}</span>
         </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="hidden items-center gap-1.5 text-[11px] text-fog md:flex">

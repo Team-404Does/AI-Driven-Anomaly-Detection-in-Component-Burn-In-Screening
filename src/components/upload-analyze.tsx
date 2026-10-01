@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw, UploadCloud, X } from "lucide-react";
 
-export default function UploadAnalyze({ batchId }: { batchId: number }) {
+export default function UploadAnalyze({ batchId, showRerun = true }: { batchId: number; showRerun?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "analyze" | "upload">(null);
   const [progress, setProgress] = useState<string[]>([]);
@@ -102,12 +102,14 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
 
   return (
     <div className="flex items-center gap-2">
-      <button
-        onClick={() => run("analyze")} disabled={!!busy}
-        className="btn btn-ghost"
-      >
-        <RefreshCw size={12} className={busy === "analyze" ? "animate-spin" : ""} /> Re-run analysis
-      </button>
+      {showRerun && (
+        <button
+          onClick={() => run("analyze")} disabled={!!busy}
+          className="btn btn-ghost"
+        >
+          <RefreshCw size={12} className={busy === "analyze" ? "animate-spin" : ""} /> Re-run analysis
+        </button>
+      )}
       <button
         onClick={() => setOpen(true)} disabled={!!busy}
         className="btn btn-primary"
