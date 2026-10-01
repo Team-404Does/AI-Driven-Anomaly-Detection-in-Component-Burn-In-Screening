@@ -3,6 +3,7 @@
 // large CSVs to stay under Vercel's ~4.5 MB request-body limit.
 import { NextResponse } from "next/server";
 import { gunzipSync } from "node:zlib";
+import { count, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, batches, components, telemetry } from "@/db/schema";
 import { runPipeline } from "@/lib/ml/pipeline";
@@ -284,7 +285,8 @@ export async function POST(req: Request) {
           for (const wc of wideCols) {
             const leak = num(c[wc.idx]);
             if (leak == null) continue;
-            if (seen.has(`${code}@${wc.hour}`)) continue;
+            // NOTE: no `seen` check here — pass 1 already deduped, and every
+            // pass-1 key is in `seen`, so checking it again would skip 100% of rows
             await pushTele(teleVal(code, wc.hour, leak, c));
           }
         }
@@ -295,11 +297,19 @@ export async function POST(req: Request) {
           const hour = hIdx >= 0 ? num(c[hIdx]) : tsIdx >= 0 ? tsHours(c[tsIdx]) : null;
           if (!compIds[code] || hour == null) continue;
           const leak = num(c[lIdx]);
-          if (seen.has(`${code}@${hour}`)) continue;
           await pushTele(teleVal(code, hour, leak, c));
         }
       }
       await drainTele();
+      // hard guard: never hand an empty batch to the pipeline again — it would
+      // silently "analyze" nothing and mark every unit MANUAL QC
+      const [{ n: persisted }] = await db
+        .select({ n: count() })
+        .from(telemetry)
+        .innerJoin(components, eq(telemetry.componentId, components.id))
+        .where(eq(components.batchId, batch.id));
+      if (!persisted) throw new Error(`0 of ${rowCount} telemetry rows persisted — insert failed silently`);
+      console.log(`[upload] ${batchCode}: persisted ${persisted}/${rowCount} telemetry rows`);
     }
   } catch (e: any) {
     console.error("[upload] telemetry persist failed", e);
