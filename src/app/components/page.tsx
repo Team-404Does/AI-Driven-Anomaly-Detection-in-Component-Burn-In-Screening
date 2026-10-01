@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function ComponentsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   const batch = await getActiveBatch(sp.batch);
-  if (!batch) return null;
+  if (!batch) return <div className="p-8 text-[12px] text-fog">No datasets yet — upload a burn-in CSV on the Overview page first.</div>;
   const stats: any = batch.stats ?? {};
   const { rows, total, page, pages } = await getComponents(batch.id, {
     q: sp.q, status: sp.status, lot: sp.lot, decision: sp.decision, hidden: sp.hidden === "1", page: Number(sp.page ?? 1),

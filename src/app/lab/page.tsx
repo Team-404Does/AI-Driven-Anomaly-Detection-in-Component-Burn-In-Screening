@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function LabPage({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
   const sp = await searchParams;
   const batch = await getActiveBatch(sp.batch);
-  if (!batch) return null;
+  if (!batch) return <div className="p-8 text-[12px] text-fog">No datasets yet — upload a burn-in CSV on the Overview page first.</div>;
   // interesting candidates: flagged first, then stable healthy, plus any hidden
   const inAll = batch.id === ALL_BATCHES;
   const flagged = await db.select().from(components)

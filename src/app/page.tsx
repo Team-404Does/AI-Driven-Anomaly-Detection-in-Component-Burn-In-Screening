@@ -11,7 +11,22 @@ export const dynamic = "force-dynamic";
 export default async function Overview({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
   const sp = await searchParams;
   const batch = await getActiveBatch(sp.batch);
-  if (!batch) return <div className="text-fog">No batch. Trigger POST /api/seed.</div>;
+  if (!batch) {
+    return (
+      <div className="fade-in">
+        <div className="rounded-lg border border-line bg-panel p-6">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-fog">Mission control</div>
+          <h1 className="mt-1 font-mono text-[20px] font-semibold text-snow">No datasets yet</h1>
+          <p className="mt-2 max-w-[620px] text-[12px] leading-relaxed text-fog">
+            This prototype starts empty — everything on screen is computed from datasets uploaded here, with no bundled demo data.
+            Upload a burn-in telemetry CSV (<span className="font-mono text-snow">component_code, hour, leakage_ua</span>) with 100, 1000 or 2000 components and it will be screened in seconds.
+            Chamber environment logs and component rosters are registered automatically with an explanation.
+          </p>
+          <div className="mt-4"><UploadAnalyze batchId={0} showRerun={false} /></div>
+        </div>
+      </div>
+    );
+  }
 
   // ---- FLEET VIEW: every uploaded dataset, aggregated ----
   if (batch.id === ALL_BATCHES) {

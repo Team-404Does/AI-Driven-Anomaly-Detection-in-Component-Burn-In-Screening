@@ -11,7 +11,7 @@ export const maxDuration = 60;
 export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ batch?: string }> }) {
   const sp = await searchParams;
   const batch = await getActiveBatch(sp.batch);
-  if (!batch) return null;
+  if (!batch) return <div className="p-8 text-[12px] text-fog">No datasets yet — upload a burn-in CSV on the Overview page first.</div>;
   const stats: any = batch.stats ?? {};
 
   // per-component aggregates for scatter + histograms

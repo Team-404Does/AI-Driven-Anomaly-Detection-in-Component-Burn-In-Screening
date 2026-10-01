@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Shell } from "@/components/nav";
-import { ensureSeeded } from "@/lib/seed";
 import { getBatches } from "@/lib/queries";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -17,7 +16,8 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  await ensureSeeded();
+  // NO auto-seeding: the prototype starts empty and shows ONLY datasets that
+  // are actually uploaded (explicit re-seed stays available via POST /api/seed).
   const batches = (await getBatches()).map((b) => ({ id: b.id, batchCode: b.batchCode, status: b.status, componentCount: b.componentCount }));
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>

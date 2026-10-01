@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function AnomaliesPage({ searchParams }: { searchParams: Promise<{ mode?: string; batch?: string }> }) {
   const sp = await searchParams;
   const batch = await getActiveBatch(sp.batch);
-  if (!batch) return null;
+  if (!batch) return <div className="p-8 text-[12px] text-fog">No datasets yet — upload a burn-in CSV on the Overview page first.</div>;
   const queue = await getAnomalyQueue(batch.id);
   const events = await getEquipmentEvents();
   return (
