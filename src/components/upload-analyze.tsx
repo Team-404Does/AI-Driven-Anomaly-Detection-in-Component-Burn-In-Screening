@@ -10,7 +10,6 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   const [progress, setProgress] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [quality, setQuality] = useState<any>(null);
-  const [schemaMap, setSchemaMap] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -20,43 +19,21 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
   ];
 
   const run = async (kind: "analyze" | "upload", file?: File) => {
-    setBusy(kind); setProgress([]); setQuality(null); setSchemaMap(null); setError(null);
+    setBusy(kind); setProgress([]); setQuality(null); setError(null);
     let i = 0;
     const timer = setInterval(() => { if (i < steps.length) { setProgress((p) => [...p, steps[i++]]); } }, 420);
     let failed = false;
     try {
-      const sendCsv = async (file: File) => {
-        const buf = await file.arrayBuffer();
-        if (typeof CompressionStream !== "undefined") {
-          const cs = new CompressionStream("gzip");
-          new Blob([buf]).stream().pipeThrough(cs);
-          const gz = await new Response(cs.readable).arrayBuffer();
-          // Vercel caps request bodies at ~4.5 MB — raw CSVs over that 413 before
-          // our code runs, so compress and let the API gunzip
-          if (gz.byteLength >= buf.byteLength) return { body: buf, gz: false };
-          return { body: gz, gz: true };
-        }
-        return { body: buf, gz: false };
-      };
-      const { body, gz } = kind === "upload" ? await sendCsv(file!) : { body: undefined, gz: false };
       const res = kind === "analyze"
         ? await fetch("/api/analyze", { method: "POST", body: JSON.stringify({ batchId }) })
-        : await fetch("/api/upload", {
-            method: "POST",
-            body: body as ArrayBuffer,
-            headers: gz ? { "Content-Encoding": "gzip", "Content-Type": "text/csv" } : { "Content-Type": "text/csv" },
-          });
+        : await fetch("/api/upload", { method: "POST", body: await file!.text() });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || j.error) {
-        const msg = res.status === 413
-          ? "File too large for the hosting platform's request limit — even compressed. Split the CSV (e.g. by lot or hour range) or remove optional columns and try again."
-          : j.error || `Upload failed (HTTP ${res.status}) — nothing was saved. Try a smaller CSV or re-run the analysis.`;
-        setError(msg);
+        setError(j.error || `Upload failed (HTTP ${res.status}) — nothing was saved. Try a smaller CSV or re-run the analysis.`);
         failed = true;
         return;
       }
       if (j.quality) setQuality(j.quality);
-      if (j.schemaMapping) setSchemaMap(j.schemaMapping);
     } catch (e: any) {
       setError(e?.message || "Network error during upload.");
       failed = true;
@@ -127,11 +104,6 @@ export default function UploadAnalyze({ batchId }: { batchId: number }) {
               {error && !busy && (
                 <div className="mt-3 rounded-md border border-red-400/30 bg-red-400/10 p-3 font-mono text-[11px] text-red-200">
                   {error}
-                </div>
-              )}
-              {schemaMap && !busy && (
-                <div className="mt-3 rounded-md border border-sky-400/25 bg-sky-400/10 p-3 font-mono text-[11px] text-sky-200">
-                  SCHEMA AUTO-MAP — {schemaMap.join(" · ")}
                 </div>
               )}
               {quality && !busy && (
